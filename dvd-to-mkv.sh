@@ -26,7 +26,7 @@ with one playlist it may be an MKV filename, otherwise it must be an existing di
 missing one is not created automatically).
 Use --keydb to set the AACS KEYDB.cfg; if omitted, one is auto-detected under ~/.config/aacs/,
 otherwise bluray_copy/bluray_info fall back to their own default AACS database.
-Use --retries N to retry a failed or invalid disc copy up to N extra times (default: 0).
+Use --retries N to retry a failed or invalid disc copy up to N extra times (0-9999, default: 0).
 Use --output-name NAME with Blu-ray output directories to name a single playlist NAME.mkv,
 or multiple playlists NAME-playlist-ID.mkv. Explicit MKV output paths take precedence.
 Playlist listings include a "# disc-name" metadata line when a disc name or UDF title exists.
@@ -134,24 +134,28 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --stream)
-            if [[ $# -lt 2 || ! $2 =~ ^[0-9]+$ ]]; then
-                echo '--stream requires a non-negative stream index.' >&2
+            if [[ $# -lt 2 || ! $2 =~ ^[0-9]{1,4}$ ]]; then
+                echo '--stream requires a stream index from 0 to 9999.' >&2
                 exit 2
             fi
-            if [[ -v "seen_streams[$2]" ]]; then
-                echo "Duplicate stream index: $2" >&2
+            # Force base 10: a leading zero would otherwise be octal, and 1 and 01 must match.
+            stream_index=$((10#$2))
+            if [[ -v "seen_streams[$stream_index]" ]]; then
+                echo "Duplicate stream index: $stream_index" >&2
                 exit 2
             fi
-            seen_streams[$2]=1
-            selected_streams+=("$2")
+            seen_streams[$stream_index]=1
+            selected_streams+=("$stream_index")
             shift 2
             ;;
         --stream-id)
-            if [[ $# -lt 2 || ! $2 =~ ^[0-9]+:0x[0-9a-fA-F]+$ ]]; then
-                echo '--stream-id requires PLAYLIST:PID, for example 0:0x1100.' >&2
+            # MPEG-TS PIDs are 13 bits: 0x0000-0x1fff.
+            if [[ $# -lt 2 || ! $2 =~ ^[0-9]{1,5}:0x0{0,4}[0-9a-fA-F]{1,4}$ ]] \
+                || (( 16#${2#*:0x} > 0x1fff )); then
+                echo '--stream-id requires PLAYLIST:PID with a PID from 0x0000 to 0x1fff, for example 0:0x1100.' >&2
                 exit 2
             fi
-            selection=${2,,}
+            selection=$((10#${2%%:*})):$(printf '0x%04x' "$((16#${2#*:0x}))")
             if [[ -v "seen_stream_ids[$selection]" ]]; then
                 echo "Duplicate stream selection: $selection" >&2
                 exit 2
@@ -184,18 +188,19 @@ while [[ $# -gt 0 ]]; do
                     minlength_set=true
                     ;;
                 --playlist)
-                    if ! [[ $2 =~ ^[0-9]+$ ]]; then
-                        echo '--playlist requires a numeric playlist ID.' >&2
+                    if ! [[ $2 =~ ^[0-9]{1,5}$ ]]; then
+                        echo '--playlist requires a playlist ID from 0 to 99999.' >&2
                         exit 2
                     fi
-                    selected_playlists+=("$2")
+                    selected_playlists+=("$((10#$2))")
                     ;;
                 --retries)
-                    if ! [[ $2 =~ ^[0-9]+$ ]]; then
-                        echo '--retries must be a non-negative number of attempts.' >&2
+                    if ! [[ $2 =~ ^[0-9]{1,4}$ ]]; then
+                        echo '--retries must be a number of attempts from 0 to 9999.' >&2
                         exit 2
                     fi
-                    retries=$2
+                    # Base 10: "08" would otherwise abort the retry check and publish a failed copy.
+                    retries=$((10#$2))
                     ;;
             esac
             shift 2
@@ -256,6 +261,9 @@ if [[ $media_type == bluray ]]; then
     fi
     if [[ -z $keydb ]]; then
         keydb=$(find_keydb || true)
+    fi
+    if [[ $keydb == -* ]]; then
+        keydb=./$keydb
     fi
     if [[ -n $keydb && ! -f $keydb ]]; then
         echo "KEYDB.cfg file does not exist: $keydb" >&2
@@ -472,6 +480,9 @@ if ! command -v ffprobe >/dev/null; then
 fi
 
 input=$1
+if [[ $input == -* ]]; then
+    input=./$input
+fi
 if [[ -d $input ]]; then
     if ! [[ $(basename "$input") == VIDEO_TS || -d $input/VIDEO_TS ]]; then
         echo "DVD directory must be VIDEO_TS or contain VIDEO_TS: $input" >&2

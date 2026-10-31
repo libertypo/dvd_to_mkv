@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess
 import threading
+import traceback
 
 import gi
 
@@ -22,6 +23,54 @@ from dvdvideo.gui_support import ManagedProcess, OperationCancelled, filename_st
 SCRIPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dvd-to-mkv.sh")
 MAX_LOG_CHARS = 512 * 1024
 MAX_PENDING_CHARS = 256 * 1024
+# GTK lays out each line as a whole; unbroken output would grow memory without bound.
+MAX_LOG_LINE_CHARS = 1024
+LOG_FOLLOW_THRESHOLD = 16
+DISC_MARKERS = (("BDMV", "INDEX.BDMV", "bluray"), ("VIDEO_TS", "VIDEO_TS.IFO", "dvd"))
+# Caps the 7z probe's virtual address space (RLIMIT_AS), not its resident memory.
+PROBE_ADDRESS_SPACE_LIMIT = 512 * 1024 * 1024
+# Inspection output comes from untrusted discs; keep the lists and labels bounded.
+MAX_INSPECTION_ROWS = 2000
+MAX_STREAM_ROWS = 512
+MAX_LABEL_CHARS = 200
+PLAYLIST_ID = re.compile(r"[0-9]{1,5}")
+DVD_STREAM_INDEX = re.compile(r"[0-9]{1,4}")
+STREAM_PID = re.compile(r"0x0{0,4}[0-9a-fA-F]{1,4}")
+MAX_STREAM_PID = 0x1FFF  # MPEG-TS PIDs are 13 bits.
+# C0/C1 controls (except tab and newline) and bidirectional overrides can disguise external text.
+UNSAFE_TEXT = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+SOURCE_SYMLINK_ERROR = "Symbolic links are not accepted as sources; choose the real file or folder."
+
+
+def clean_text(text):
+    return UNSAFE_TEXT.sub("", text)
+
+
+def clean_label(text):
+    text = clean_text(text)
+    return text if len(text) <= MAX_LABEL_CHARS else text[:MAX_LABEL_CHARS - 1] + "…"
+
+
+def symlinked_source(source):
+    # normpath drops a trailing slash, so lstat sees the link rather than its target.
+    try:
+        if not stat.S_ISLNK(os.lstat(os.path.normpath(source)).st_mode):
+            return False
+    except (OSError, ValueError):
+        return False
+    # Device aliases such as /dev/cdrom are symlinks managed by the system.
+    try:
+        return not stat.S_ISBLK(os.stat(source).st_mode)
+    except OSError:
+        return True
+
+
+def is_plain_directory(path):
+    return stat.S_ISDIR(os.lstat(path).st_mode)
+
+
+def is_plain_file(path):
+    return stat.S_ISREG(os.lstat(path).st_mode)
 
 
 def source_name(source):
@@ -34,36 +83,56 @@ def source_name(source):
     return filename_stem(name) or "disc"
 
 
+def find_entry(directory, name, accept):
+    # Disc folders are matched case-insensitively; copies often use lowercase names.
+    for entry in os.listdir(directory):
+        path = os.path.join(directory, entry)
+        if entry.upper() == name and accept(path):
+            return path
+    return None
+
+
 def detect_media(source, probe=None):
+    """Return "dvd" or "bluray" from the disc structure; images and devices are listed with 7z."""
+    if symlinked_source(source):
+        raise RuntimeError(SOURCE_SYMLINK_ERROR)
     source_stat = os.stat(source)
     if stat.S_ISDIR(source_stat.st_mode):
-        names = {name.upper() for name in os.listdir(source)}
+        source_folder = os.path.basename(os.path.normpath(source)).upper()
         kinds = set()
-        if os.path.isdir(os.path.join(source, "BDMV")) or (
-            os.path.basename(os.path.normpath(source)).upper() == "BDMV" and "INDEX.BDMV" in names
-        ):
-            kinds.add("bluray")
-        if os.path.isdir(os.path.join(source, "VIDEO_TS")) or (
-            os.path.basename(os.path.normpath(source)).upper() == "VIDEO_TS" and "VIDEO_TS.IFO" in names
-        ):
-            kinds.add("dvd")
+        for folder, marker, kind in DISC_MARKERS:
+            folder_path = source if source_folder == folder else find_entry(source, folder, is_plain_directory)
+            if folder_path and find_entry(folder_path, marker, is_plain_file):
+                kinds.add(kind)
     elif stat.S_ISREG(source_stat.st_mode) or stat.S_ISBLK(source_stat.st_mode):
         tool = shutil.which("7zz") or shutil.which("7z")
         if not tool:
             raise RuntimeError("Automatic image/device detection requires 7zz or 7z. Choose DVD or Blu-ray manually.")
-        result = (probe or ManagedProcess()).run([tool, "l", "-slt", "-ba", "--", source], timeout=30)
+        limiter = shutil.which("prlimit")
+        if not limiter:
+            raise RuntimeError(
+                "Automatic image/device detection requires prlimit (util-linux) to cap 7z address space. "
+                "Choose DVD or Blu-ray manually."
+            )
+        command = [
+            limiter, f"--as={PROBE_ADDRESS_SPACE_LIMIT}", "--", tool, "l", "-slt", "-ba", "--", source,
+        ]
+        result = (probe or ManagedProcess()).run(command, timeout=30)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
             raise RuntimeError(f"Could not inspect the source filesystem: {detail}")
-        roots = {
-            line.removeprefix("Path = ").replace("\\", "/").split("/")[0].upper()
+        paths = {
+            line.removeprefix("Path = ").replace("\\", "/").strip("/").upper()
             for line in result.stdout.splitlines() if line.startswith("Path = ")
         }
-        kinds = {kind for root, kind in (("BDMV", "bluray"), ("VIDEO_TS", "dvd")) if root in roots}
+        kinds = {kind for folder, marker, kind in DISC_MARKERS if f"{folder}/{marker}" in paths}
     else:
         raise RuntimeError("Source must be a disc image, optical device, or disc folder.")
     if len(kinds) != 1:
-        raise RuntimeError("Source has no unique BDMV or VIDEO_TS structure. Choose DVD or Blu-ray manually.")
+        raise RuntimeError(
+            "Source has no unique BDMV/index.bdmv or VIDEO_TS/VIDEO_TS.IFO structure. "
+            "Choose DVD or Blu-ray manually."
+        )
     return kinds.pop()
 
 
@@ -78,13 +147,13 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         self.running = False
         self.suggested_name = ""
         self.suggested_output = ""
-        self.detection_generation = 0
+        self.detection_generation = 0  # Invalidates detection on source changes or cancellation.
         self.detection_timeout = None
         self.detecting = False
         self.detection_probe = None
         self.jobs = []
         self.operation = None
-        self.source_generation = 0
+        self.source_generation = 0  # Invalidates inspection/copy results on source changes.
         self.chooser_generation = 0
         self.mode_outputs = {False: "", True: ""}
         self.output_mode = False
@@ -96,6 +165,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         self.pending_log = deque()
         self.pending_log_chars = 0
         self.dropped_log_chars = 0
+        self.log_column = 0
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         root.set_margin_top(12)
@@ -193,7 +263,9 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         log_scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=90)
         log_scroll.set_child(log_view)
         self.log_adjustment = log_scroll.get_vadjustment()
+        self.follow_log = True
         self.log_adjustment.connect("changed", self.scroll_log_to_end)
+        self.log_adjustment.connect("value-changed", self.on_log_scrolled)
         activity_box.append(log_scroll)
         self.activity_panes = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         self.activity_panes.set_start_child(self.selection_panes)
@@ -300,6 +372,8 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             self.detection_probe = None
 
     def start_detection(self, source, generation):
+        if self.closing or generation != self.detection_generation or source != self.source_entry.get_text():
+            return False
         self.detection_timeout = None
         probe = ManagedProcess()
         self.detection_probe = probe
@@ -315,6 +389,12 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
                 GLib.idle_add(self.finish_detection, source, generation, None, "Source does not exist.")
             except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
                 GLib.idle_add(self.finish_detection, source, generation, None, str(error))
+            except Exception as error:
+                self.log("Unexpected media detection error:\n" + traceback.format_exc().rstrip())
+                GLib.idle_add(
+                    self.finish_detection, source, generation, None,
+                    f"Unexpected error: {type(error).__name__}: {error}",
+                )
             else:
                 GLib.idle_add(self.finish_detection, source, generation, media, None)
 
@@ -325,13 +405,18 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         return False
 
     def start_worker(self, worker):
+        thread = None
         try:
+            # Non-daemon on purpose: closing waits for workers so no subprocess is left behind.
             thread = threading.Thread(target=worker)
+            # Register before start() so even a worker that finishes at once is tracked.
+            self.jobs.append(thread)
             thread.start()
         except RuntimeError as error:
+            if thread is not None:
+                self.jobs.remove(thread)
             self.log(f"Could not start background worker: {error}")
             return False
-        self.jobs.append(thread)
         return True
 
     def finish_detection(self, source, generation, media, error):
@@ -451,16 +536,39 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             self.log_buffer.delete(self.log_buffer.get_start_iter(), self.log_buffer.get_iter_at_offset(excess))
         self.scroll_log_to_end()
 
+    def on_log_scrolled(self, adjustment):
+        bottom = adjustment.get_upper() - adjustment.get_page_size()
+        self.follow_log = adjustment.get_value() >= bottom - LOG_FOLLOW_THRESHOLD
+
     def scroll_log_to_end(self, *_args):
-        self.log_adjustment.set_value(
-            self.log_adjustment.get_upper() - self.log_adjustment.get_page_size()
-        )
+        if self.follow_log:
+            self.log_adjustment.set_value(
+                self.log_adjustment.get_upper() - self.log_adjustment.get_page_size()
+            )
 
     def log(self, text):
         self.queue_log(f"{text}\n")
 
+    def break_long_lines(self, text):
+        # Called with log_lock held; log_column carries the open line across chunks.
+        pieces = []
+        for index, part in enumerate(text.split("\n")):
+            if index:
+                pieces.append("\n")
+                self.log_column = 0
+            while self.log_column + len(part) > MAX_LOG_LINE_CHARS:
+                room = MAX_LOG_LINE_CHARS - self.log_column
+                pieces += [part[:room], "\n"]
+                part = part[room:]
+                self.log_column = 0
+            pieces.append(part)
+            self.log_column += len(part)
+        return "".join(pieces)
+
     def queue_log(self, text):
+        text = clean_text(text)
         with self.log_lock:
+            text = self.break_long_lines(text)
             if len(text) > MAX_PENDING_CHARS:
                 self.dropped_log_chars += len(text) - MAX_PENDING_CHARS
                 text = text[-MAX_PENDING_CHARS:]
@@ -480,6 +588,10 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             self.dropped_log_chars = 0
         if dropped:
             text = f"[Activity omitted {dropped} older characters to keep the interface responsive.]\n" + text
+            # Start the notice on its own line so it cannot extend an unfinished one.
+            end = self.log_buffer.get_end_iter()
+            if end.backward_char() and end.get_char() != "\n":
+                text = "\n" + text
         if text:
             self.append_log(text)
         self.jobs = [job for job in self.jobs if job.is_alive()]
@@ -504,6 +616,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         if not source:
             self.log("Choose a source first.")
             return None
+        # Keep a relative path starting with a dash from being read as an option.
         if source.startswith("-"):
             source = "./" + source
         if self.bluray_button.get_active():
@@ -517,6 +630,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             output = self.output_entry.get_text() or "."
             for identifier in selected:
                 command += ["--playlist", identifier]
+                # No saved entry copies every stream; an empty list means nothing was chosen.
                 if identifier in self.playlist_streams:
                     streams = self.playlist_streams[identifier]
                     if not streams:
@@ -570,8 +684,9 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             return
         playlist = selected[0]
         previous = self.playlist_streams.get(playlist)
-        self.playlist_streams[playlist] = []
-        self.clear_stream_rows()
+        if previous is None:
+            # Without a saved selection, a failed inspection must not fall back to copying all streams.
+            self.playlist_streams[playlist] = []
         command = [SCRIPT_PATH, "--bluray", "--device", source, "--playlist", playlist, "--list-streams"]
         self.run(command, lambda output: self.load_stream_rows(playlist, output, previous, refresh=True))
 
@@ -602,14 +717,19 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             success_callback = None
             status = "Failed"
             try:
+                # Check again: the source may have been replaced after detection.
+                if source and symlinked_source(source):
+                    raise RuntimeError(SOURCE_SYMLINK_ERROR)
                 if output_snapshot:
                     if not self.check_output_snapshot(output_snapshot, operation):
                         return
                     output_path, bluray_output, name, _playlists = output_snapshot
                     if bluray_output and name and os.path.isdir(output_path):
+                        # Insert before the trailing "--" and output path.
                         process_command = command[:-2] + ["--output-name", name] + command[-2:]
                     GLib.idle_add(self.show_copying_status, operation)
                 self.log("$ " + " ".join(process_command))
+                # Only inspections need stdout; ManagedProcess caps what it collects at 8 MiB.
                 result = operation.run(process_command, collect=on_success is not None, log=self.queue_log)
                 output = result.stdout
                 if result.returncode == 0:
@@ -621,6 +741,8 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
                 self.log("Operation cancelled; subprocesses stopped.")
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 self.log(f"Operation failed: {error}")
+            except Exception:
+                self.log("Unexpected worker error:\n" + traceback.format_exc().rstrip())
             finally:
                 GLib.idle_add(
                     self.finish_run, success_callback, output, generation, source, is_bluray, status
@@ -655,6 +777,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         self.status_label.set_text(status)
         if self.closing:
             return
+        # Drop results that belong to an earlier source or media mode.
         if generation is not None and (
             generation != self.source_generation or source != self.source_entry.get_text()
             or is_bluray != self.bluray_button.get_active()
@@ -708,6 +831,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
     def finish_close(self):
         if self.log_timer is None:
             return False
+        # Polled every 100 ms until all workers and their subprocesses have stopped.
         if self.running or any(job.is_alive() for job in self.jobs):
             return True
         self.flush_log()
@@ -719,14 +843,20 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
 
     def load_rows(self, output):
         self.clear_rows()
+        truncated = False
         if self.bluray_button.get_active():
             for line in output.splitlines():
                 fields = line.split("\t", 2)
                 if len(fields) == 2 and fields[0] == "# disc-name":
                     self.suggest_name(fields[1])
-                elif len(fields) == 3 and fields[0].isdecimal():
+                elif len(fields) == 3 and PLAYLIST_ID.fullmatch(fields[0]):
+                    if len(self.rows) >= MAX_INSPECTION_ROWS:
+                        truncated = True
+                        break
                     playlist, duration, chapters = fields
-                    self.add_row(playlist, f"Playlist {playlist}    {duration}    {chapters} chapters")
+                    self.add_row(playlist, clean_label(f"Playlist {playlist}    {duration}    {chapters} chapters"))
+            if truncated:
+                self.log(f"Inspection listed too many playlists; showing the first {MAX_INSPECTION_ROWS}.")
             if not self.rows:
                 self.log("No Blu-ray playlists found in the inspection output. See Activity for details.")
                 self.status_label.set_text("No playlists found")
@@ -739,11 +869,16 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             for line in output.splitlines():
                 fields = line.split(maxsplit=1)
                 if (
-                    len(fields) == 2 and fields[0].isdecimal()
+                    len(fields) == 2 and DVD_STREAM_INDEX.fullmatch(fields[0])
                     and fields[1].split()[0] in ("video", "audio", "subtitle", "data", "attachment")
                 ):
+                    if len(self.rows) >= MAX_INSPECTION_ROWS:
+                        truncated = True
+                        break
                     stream_index, details = fields
-                    self.add_row(stream_index, f"Stream {stream_index}  {details}")
+                    self.add_row(stream_index, clean_label(f"Stream {stream_index}  {details}"))
+            if truncated:
+                self.log(f"Inspection listed too many streams; showing the first {MAX_INSPECTION_ROWS}.")
             if not self.rows:
                 self.log("No DVD streams found in the inspection output. See Activity for details.")
                 self.status_label.set_text("No streams found")
@@ -752,19 +887,29 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         streams = []
         seen = set()
         invalid = duplicates = 0
+        truncated = False
         for line in output.splitlines():
             if not line.strip() or line == "PID\tTYPE\tCODEC\tLANG\tFORMAT":
                 continue
             fields = line.split("\t")
-            if len(fields) != 5 or not re.fullmatch(r"0x[0-9a-fA-F]+", fields[0]):
+            if (
+                len(fields) != 5 or not STREAM_PID.fullmatch(fields[0])
+                or int(fields[0], 16) > MAX_STREAM_PID
+            ):
                 invalid += 1
                 continue
+            # Normalise so 0x1011 and 0x01011 count as the same stream.
             identifier = f"0x{int(fields[0], 16):04x}"
             if identifier in seen:
                 duplicates += 1
                 continue
+            if len(streams) >= MAX_STREAM_ROWS:
+                truncated = True
+                break
             seen.add(identifier)
             streams.append((identifier, "  ".join(value for value in fields[1:] if value)))
+        if truncated:
+            self.log(f"Playlist {playlist} listed too many streams; showing the first {MAX_STREAM_ROWS}.")
         if invalid or duplicates:
             self.log(
                 f"Stream inspection ignored {invalid} malformed and {duplicates} duplicate records "
@@ -774,6 +919,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             self.log(f"No streams found for playlist {playlist}. See Activity for details.")
             self.status_label.set_text("Stream inspection failed")
             return
+        # Without an earlier choice, a refresh selects every stream; otherwise reuse the saved one.
         if selected is None:
             all_streams = [identifier for identifier, _ in streams]
             selected = all_streams if refresh else self.playlist_streams.get(playlist, all_streams)
@@ -781,7 +927,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         self.stream_playlist = playlist
         self.streams_label.set_text(f"Streams for playlist {playlist}")
         for identifier, details in streams:
-            checkbox = Gtk.CheckButton(label=f"{identifier}  {details}")
+            checkbox = Gtk.CheckButton(label=clean_label(f"{identifier}  {details}"))
             checkbox.set_active(identifier in selected)
             self.stream_list_box.append(checkbox)
             self.stream_rows.append((checkbox, identifier))
@@ -824,6 +970,7 @@ class DvdToMkvApplication(Gtk.Application):
 
 if __name__ == "__main__":
     application = DvdToMkvApplication()
+    # Ctrl+C and SIGTERM go through the normal close path so subprocesses are stopped.
     signal_sources = [
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, application.request_shutdown)
         for sig in (signal.SIGINT, signal.SIGTERM)
