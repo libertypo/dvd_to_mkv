@@ -17,6 +17,20 @@ Scripts for selecting and remuxing DVD streams or Blu-ray playlists to MKV.
 
 Protected Blu-ray discs may require a local AACS key database. Keep it private.
 
+The script looks for `~/.config/aacs/KEYDB.cfg` (or `keydb.cfg`), or you can
+provide a path with `--keydb /path/to/KEYDB.cfg`. For a private user setup:
+
+```sh
+chmod 700 ~/.config/aacs
+chmod 600 ~/.config/aacs/KEYDB.cfg
+```
+
+The script checks the key file's permissions whether you specify it yourself
+or it finds it automatically, and rejects any group or other permissions.
+The folder's `700` permissions are recommended, but aren't checked.
+If neither a path nor a file in that folder is found, the script leaves
+database discovery to `bluray_info` and `bluray_copy`.
+
 ## Graphical interface
 
 Run from the directory containing both scripts:

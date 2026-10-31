@@ -33,6 +33,11 @@ A bit of tidying up and quite a few fixes. No big new features this time.
 
 ### Worth knowing
 
+- A reminder for encrypted Blu-rays: keep `~/.config/aacs/` at `700` and
+  `KEYDB.cfg` at `600`. The script checks the file's permissions even when
+  it finds it automatically, not just when you use `--keydb`. The folder
+  permissions are a recommendation, not a check. This isn't new behaviour,
+  just something worth spelling out.
 - Automatic detection of images and devices now needs `prlimit`, from
   util-linux, as well as `7z` or `7zz`. It limits the probe's virtual address
   space to 512 MiB, not its physical RAM use. Without these tools, you can
