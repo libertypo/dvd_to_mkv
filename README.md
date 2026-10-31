@@ -8,8 +8,7 @@ Scripts for selecting and remuxing DVD streams or Blu-ray playlists to MKV.
 - Bash, FFmpeg and FFprobe
 - For DVD input, FFmpeg built with the `dvdvideo` input format
 - For Blu-ray input, `bluray_info`, `bluray_copy` and `jq`
-- For the graphical interface, Python with GTK 4 bindings and
-  `dvdvideo.gui_support`
+- For the graphical interface, Python with GTK 4 bindings
 - For automatic detection of image files or devices, `7z` or `7zz` and
   `prlimit` (util-linux), which caps the probe's virtual address space at
   512 MiB (this limits allocations, not resident RAM); without
@@ -33,7 +32,7 @@ database discovery to `bluray_info` and `bluray_copy`.
 
 ## Graphical interface
 
-Run from the directory containing both scripts:
+Keep the included `dvdvideo/` folder alongside both scripts, then run:
 
 ```sh
 ./dvd-to-mkv-gui.py
