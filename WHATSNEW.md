@@ -1,5 +1,53 @@
 # What's new
 
+## 2026-11-10
+
+Saved profiles, remembered track choices, and better handling of Blu-ray
+chapters and 3D discs, along with a good round of fixes.
+
+### Less setting things up from scratch
+
+- Save profiles with your preferred audio and subtitle languages, Blu-ray
+  output format, and minimum playlist length.
+- The app remembers your profile and track choices for each disc or source,
+  so you don't have to pick everything again next time. Output locations
+  aren't saved.
+- New lists start with nothing selected unless you've saved choices or your
+  profile matches tracks by language. Use Select All when you want everything.
+- Refreshing a Blu-ray's track list now brings back saved choices that
+  were hidden because the list was too long. Tracks you deliberately
+  unchecked stay unchecked.
+
+### Blu-ray chapters and 3D
+
+- Blu-ray MKVs keep the playlist's chapter markers, even when you only copy
+  some tracks. Original M2TS copies get a separate chapter file alongside
+  the video; whether it works depends on your player.
+- Choose Automatic, MKV, or original M2TS for Blu-rays. Automatic keeps
+  original M2TS when it detects the disc's 3D video, rather than losing
+  the extra view. Original M2TS copies include all tracks.
+- For now, 3D stays in M2TS while we wait for FFmpeg/mkvmerge to catch up
+  with reliable Blu-ray 3D (MVC) remuxing to MKV in this workflow.
+- Fixed a case where a normal timing reset on a 3D Blu-ray could make
+  Automatic output choose MKV and lose the 3D part. Converting these
+  playlists to 3D MKV isn't supported yet.
+- Switching profiles now asks again before copying all tracks to original
+  M2TS, rather than silently ignoring your track choices.
+- That warning also catches tracks hidden by the display limit, even if
+  you've selected every track you can see.
+
+### Safer copying
+
+- Fixed a security issue in shared output folders: someone with access to
+  such a folder could redirect a copy and cause another file to be overwritten.
+  Copying now stays tied to the folder it started in, and folders with unsafe
+  ownership or permissions are refused. This needs Linux with `/proc` available.
+- Gave the copier and its supporting code another security check. No new
+  vulnerabilities were confirmed, and all tests and extra security checks
+  passed, including checks with GTK and the Avatar disc image. That isn't a
+  guarantee: attacks from a separate user account, other filesystem types,
+  and security bugs in external tools weren't tested.
+
 ## 2026-10-31
 
 A bit of tidying up and quite a few fixes. No big new features this time.

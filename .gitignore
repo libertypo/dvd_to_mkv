@@ -1,0 +1,8 @@
+__pycache__
+.venv
+/build
+/debian/files
+/debian/python3-dvdvideo*
+/requirements-dev.txt
+/test_dvd_to_mkv_*.py
+/TECHNICAL.md

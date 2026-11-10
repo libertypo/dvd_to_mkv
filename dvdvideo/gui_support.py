@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import codecs
-from collections.abc import Callable
 import os
 import re
 import selectors
@@ -11,7 +10,7 @@ import signal
 import subprocess
 import threading
 import time
-
+from collections.abc import Callable
 
 MAX_INSPECTION_BYTES = 8 * 1024 * 1024
 TERMINATION_GRACE = 3
@@ -116,7 +115,7 @@ class ManagedProcess:
                             if size > MAX_INSPECTION_BYTES:
                                 raise RuntimeError("Inspection output exceeded the 8 MiB limit.")
                             output.append(text)
-                        elif collect and key.data == "stderr":
+                        elif collect and key.data == "stderr" and text:
                             errors.append(text)
                             error_size += len(text)
                             # Keep a bounded diagnostic tail for probe errors.
@@ -141,6 +140,7 @@ class ManagedProcess:
 
 def validate_output_paths(
     output: str, is_bluray: bool, name: str, playlists: list[str], operation: ManagedProcess,
+    formats: dict[str, str] | None = None,
 ) -> None:
     operation.check_cancelled()
     paths = [output]
@@ -151,14 +151,18 @@ def validate_output_paths(
                 "reserved characters, or leading/trailing dots."
             )
         paths = [
-            os.path.join(output, f"{name}.mkv" if name and len(playlists) == 1
-                         else f"{name + '-' if name else ''}playlist-{pid}.mkv")
+            os.path.join(output, (name if name and len(playlists) == 1
+                                  else f"{name + '-' if name else ''}playlist-{pid}")
+                         + "." + (formats or {}).get(pid, "mkv"))
             for pid in playlists
         ]
+        paths += [path + ".chapters.txt" for path in paths if path.endswith(".m2ts")]
     elif not is_bluray and os.path.isdir(output):
         raise ValueError("DVD output must be an MKV filename, not a directory.")
     elif is_bluray and len(playlists) > 1:
         raise ValueError("Multiple Blu-ray playlists require an existing output directory.")
+    elif is_bluray and output.lower().endswith(".m2ts"):
+        paths.append(output + ".chapters.txt")
     for path in paths:
         operation.check_cancelled()
         directory = os.path.dirname(os.path.abspath(path))

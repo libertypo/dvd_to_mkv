@@ -1,97 +1,97 @@
 # DVD and Blu-ray to MKV
 
-Scripts for selecting and remuxing DVD streams or Blu-ray playlists to MKV.
+Copy the bits you want from a DVD or Blu-ray into a video file, without
+re-encoding. Pick the movie, audio, and subtitles, and leave the rest behind.
 
-## Requirements
+## What you'll need
 
-- Linux
-- Bash, FFmpeg and FFprobe
-- For DVD input, FFmpeg built with the `dvdvideo` input format
-- For Blu-ray input, `bluray_info`, `bluray_copy` and `jq`
-- For the graphical interface, Python with GTK 4 bindings
-- For automatic detection of image files or devices, `7z` or `7zz` and
-  `prlimit` (util-linux), which caps the probe's virtual address space at
-  512 MiB (this limits allocations, not resident RAM); without
-  them, choose DVD or Blu-ray manually
+This runs on Linux. Before starting, make sure you have:
 
-Protected Blu-ray discs may require a local AACS key database. Keep it private.
+- **Bash, FFmpeg and FFprobe** for copying and checking video.
+- **Python 3, PyGObject and GTK 4** for the windowed app.
+- **For DVDs:** an FFmpeg build with the `dvdvideo` input format.
+  Not every packaged version includes it.
+- **For Blu-rays:** `bluray_info`, `bluray_copy` and `jq`.
+- **For automatic 3D detection:** FFprobe with Blu-ray protocol support.
+- **For automatic disc detection:** `7z` or `7zz`, plus `prlimit` from
+  util-linux. Without these, choose DVD or Blu-ray yourself.
 
-The script looks for `~/.config/aacs/KEYDB.cfg` (or `keydb.cfg`), or you can
-provide a path with `--keydb /path/to/KEYDB.cfg`. For a private user setup:
+Linux's `/proc` filesystem also needs to be available for safe copying.
+Package names vary between distributions.
 
-```sh
-chmod 700 ~/.config/aacs
-chmod 600 ~/.config/aacs/KEYDB.cfg
-```
+## Get started
 
-The script checks the key file's permissions whether you specify it yourself
-or it finds it automatically, and rejects any group or other permissions.
-The folder's `700` permissions are recommended, but aren't checked.
-If neither a path nor a file in that folder is found, the script leaves
-database discovery to `bluray_info` and `bluray_copy`.
-
-## Graphical interface
-
-Keep the included `dvdvideo/` folder alongside both scripts, then run:
+Keep the included `dvdvideo/` folder beside the scripts, then run:
 
 ```sh
 ./dvd-to-mkv-gui.py
 ```
 
-Enter or browse to a disc image, device, or disc folder. Choose DVD or Blu-ray,
-inspect the available streams or playlists, select what to include, and choose
-an output path. The Activity pane reports progress and errors.
+1. Choose your disc image, drive, or disc folder.
+2. Let the app detect DVD or Blu-ray, or choose it yourself.
+3. Inspect the disc and pick what to copy.
+4. Choose where to save it and start copying.
 
-Media detection is debounced while editing the source. Pending detection for
-an obsolete source or a manually selected media mode is discarded. Disc folders
-and images are recognized by `BDMV/index.bdmv` or `VIDEO_TS/VIDEO_TS.IFO`,
-matched case-insensitively.
+The Activity pane tells you what's happening and shows any errors.
+Existing output files won't be overwritten.
 
-The GUI rejects sources, disc folders, and marker files that are symbolic
-links; choose the real path instead. Symbolic links to optical devices, such
-as `/dev/cdrom`, are accepted. The command-line script still follows links.
+## Pick your tracks once
 
-Inspection output is treated as untrusted: playlist and stream identifiers
-must be short ASCII numbers, lists are capped at 2000 playlists or DVD streams
-and 512 Blu-ray streams, and control or bidirectional-override characters are
-removed from labels, Activity output, and suggested filenames.
+Save a profile with your favourite audio and subtitle languages, Blu-ray
+output format, and minimum playlist length.
 
-Closing cancels active operations and waits for background workers to stop
-their subprocesses before exiting. A failed stream inspection keeps the
-previous track selection. The Activity pane follows new output only while it
-is scrolled to the bottom. It keeps at most the last 512K characters and breaks
-lines longer than 1024 characters, so a flood of output without newlines cannot
-exhaust memory.
+The app also remembers your choices for each source, so opening the same
+disc again doesn't mean starting from scratch. You'll still need to choose
+where to save the copy.
 
-## Command line
+New lists start with nothing selected unless you have saved choices or your
+profile picks matching tracks. Use **Select All** or **Select All Tracks**
+when you want everything.
 
-List DVD streams and copy selected streams:
+## MKV or M2TS?
+
+For regular 2D video, MKV is the usual choice. Blu-rays offer three options:
+
+- **Automatic:** uses MKV normally and keeps original M2TS when it detects
+  Blu-ray 3D video.
+- **MKV:** lets you choose which tracks to keep.
+- **Original M2TS:** keeps all tracks, including both views of a 3D movie.
+  You can't leave individual tracks out in this mode.
+
+For now, 3D stays in M2TS while we wait for FFmpeg/mkvmerge to catch up with
+reliable Blu-ray 3D copying to MKV in this workflow. Choosing MKV yourself
+doesn't add 3D support.
+
+Automatic detection only checks a sample. If you know a playlist is 3D but
+it isn't detected, choose **Original M2TS** yourself. You'll need a player
+that supports Blu-ray 3D; full-movie 3D playback hasn't been verified here.
+
+## Chapters come along too
+
+Blu-ray MKVs keep the playlist's chapter markers. M2TS copies get a separate
+chapter file beside the video instead. Keep the two together, but bear in
+mind that not every player reads that file, and seeking may be off on
+playlists made from several clips.
+
+## A few things worth knowing
+
+- The suggested main movie is a hint, not a promise. The longest playlist
+  can sometimes be a menu.
+- Protected Blu-rays may need a local key database. Put `KEYDB.cfg` in
+  `~/.config/aacs/` and keep it private: folder permissions `700`, file
+  permissions `600`.
+- Save into a folder you own. Unsafe shared output folders are refused.
+- If the app rejects a shortcut to a disc image or folder, choose the real
+  file or folder instead. Drive links such as `/dev/cdrom` are fine.
+
+## Prefer the terminal?
+
+Start with:
 
 ```sh
-./dvd-to-mkv.sh --list-streams INPUT
-./dvd-to-mkv.sh --stream INDEX --stream INDEX INPUT OUTPUT
+./dvd-to-mkv.sh --help
 ```
 
-List Blu-ray playlists or tracks and copy a playlist:
+## More details
 
-```sh
-./dvd-to-mkv.sh --bluray --device DEVICE --list-playlists
-./dvd-to-mkv.sh --bluray --device DEVICE --playlist ID --list-streams
-./dvd-to-mkv.sh --bluray --device DEVICE --playlist ID OUTPUT
-```
-
-Use `--stream-id ID:PID` to select Blu-ray tracks; PIDs range from `0x0000`
-to `0x1fff`. Stream indexes (0–9999), playlist IDs (0–99999) and
-`--retries` (0–9999) are read as decimal numbers, so `01` is the same as `1`.
-Multiple playlists can be
-selected by repeating `--playlist`; provide an existing output directory when
-copying more than one. Options go before positional arguments; use `--` before
-paths that begin with a dash, which are then treated as relative files (for
-example `-disc` becomes `./-disc`). A `--device` value beginning with a dash is
-rejected; write it as `./-disc`. Run either script with `--help` for its
-full usage.
-
-## Output safety
-
-Existing output files are not overwritten. Copies are prepared in temporary
-files and published only after validation.
+- [What's new](./WHATSNEW.md)
