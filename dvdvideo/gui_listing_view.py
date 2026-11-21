@@ -303,7 +303,6 @@ class ListingView:
             (self._row(label, identifier in selected, streams=True), identifier)
             for identifier, label in rows
         ]
-        self.show_unselected = False
         self._stream_model.replace([])
         self._schedule_visibility_refresh()
         self.streams_label.set_text(self.translate("Streams for playlist {playlist}").format(playlist=playlist))
@@ -311,7 +310,7 @@ class ListingView:
     def clear_stream_rows(self) -> None:
         self.stream_rows.clear()
         self._stream_model.replace([])
-        self.streams_label.set_text(self.translate("Select one playlist and click Inspect Tracks"))
+        self.streams_label.set_text(self.translate("Choose a playlist to inspect its tracks"))
         self._schedule_visibility_refresh()
 
     def update_stream_format(

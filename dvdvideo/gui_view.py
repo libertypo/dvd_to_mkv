@@ -46,6 +46,7 @@ class OperationCallbacks(Protocol):
     def inspect_streams(self, *args: object) -> None: ...
     def discover_dvd_titles(self, *args: object) -> None: ...
     def on_dvd_title_changed(self, *args: object) -> None: ...
+    def on_track_playlist_changed(self, *args: object) -> None: ...
     def cancel_operation(self, *args: object) -> None: ...
     def choose_output(self, *args: object) -> None: ...
     def on_output_changed(self, *args: object) -> None: ...
@@ -270,10 +271,17 @@ class WindowView:
         self.streams_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         track_header = Gtk.Box(spacing=8)
         track_header.append(Gtk.Label(label="Tracks", xalign=0, hexpand=True, css_classes=["heading"]))
+        self.track_playlist_combo = Choice()
+        self.track_playlist_combo.set_hexpand(True)
+        self.track_playlist_combo.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["Playlist for track inspection"]
+        )
+        self.track_playlist_combo.set_tooltip_text("Playlist for track inspection")
+        track_header.append(self.track_playlist_combo)
         track_header.append(self.inspect_streams_button)
         track_header.append(self.select_all_streams_button)
         self.streams_box.append(track_header)
-        self.streams_label = Gtk.Label(label="Select one playlist and click Inspect Tracks", xalign=0)
+        self.streams_label = Gtk.Label(label="Choose a playlist to inspect its tracks", xalign=0)
         self.streams_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.streams_box.append(self.streams_label)
         self.tracks_empty_label = Gtk.Label(
@@ -342,9 +350,7 @@ class WindowView:
 
     def translate(self, gettext: Callable[[str], str]) -> None:
         def translate_widget(widget: Gtk.Widget) -> None:
-            if isinstance(widget, Gtk.Label):
-                widget.set_label(gettext(widget.get_label()))
-            elif isinstance(widget, (Gtk.Button, Gtk.MenuButton, Gtk.CheckButton)):
+            if isinstance(widget, (Gtk.Label, Gtk.Button, Gtk.MenuButton, Gtk.CheckButton)):
                 label = widget.get_label()
                 if label:
                     widget.set_label(gettext(label))
@@ -362,6 +368,9 @@ class WindowView:
                 child = next_child
 
         translate_widget(self.root)
+        self.track_playlist_combo.update_property(
+            [Gtk.AccessibleProperty.LABEL], [gettext("Playlist for track inspection")]
+        )
         for choice in (self.format_combo, self.dvd_title_combo, self.gui_language_combo):
             model = choice.get_model()
             if isinstance(model, Gtk.StringList):
@@ -371,12 +380,13 @@ class WindowView:
                     label = model.get_string(index)
                     if label is None:
                         raise ValueError(f"Missing choice label at index {index}")
-                    labels.append(gettext(label))
+                    labels.append(gettext(label) if label else label)
                 model.splice(0, model.get_n_items(), labels)
                 choice.set_active_id(selected)
 
     def connect_final_signals(self) -> None:
         self.dvd_title_combo.connect("changed", self.callbacks.on_dvd_title_changed)
+        self.track_playlist_combo.connect("changed", self.callbacks.on_track_playlist_changed)
         self.source_entry.connect("changed", self.callbacks.on_source_changed)
         self.output_entry.connect("changed", self.callbacks.on_output_changed)
         self.name_entry.connect("changed", self.callbacks.invalidate_choosers)

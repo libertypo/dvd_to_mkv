@@ -212,6 +212,9 @@ def execute_operation(
                 raise RuntimeError("Operation preflight did not return an output path")
             output_path = preflight.output_path
             directory_output = preflight.directory_output
+            if preflight.output_error is not None:
+                hooks.log(f"Cannot validate output filename: {preflight.output_error}")
+                return OperationResult("Failed")
             if output_path != spec.path:
                 output_index = request.output_argument_index
                 if output_index is None or not 0 <= output_index < len(command) or command[output_index] != spec.path:
@@ -219,9 +222,6 @@ def execute_operation(
                 command[output_index] = output_path
                 if not request.summary_only:
                     hooks.output_changed(output_path)
-            if preflight.output_error is not None:
-                hooks.log(f"Cannot validate output filename: {preflight.output_error}")
-                return OperationResult("Failed")
             if request.summary_only:
                 if preflight.copy_summary is None:
                     raise RuntimeError("Copy preflight did not return a summary")

@@ -160,6 +160,12 @@ msgstr ""
 msgid "Select one playlist and click Inspect Tracks"
 msgstr ""
 
+msgid "Choose a playlist to inspect its tracks"
+msgstr ""
+
+msgid "Playlist for track inspection"
+msgstr ""
+
 msgid "Blu-ray streams"
 msgstr ""
 

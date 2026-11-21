@@ -256,7 +256,12 @@ class OperationController:
                     return parse_playlists(output, translate=self.hooks.ui.translate)
                 return parse_dvd_streams(output)
 
-            self.start(command, on_listing=self.hooks.listing.load_rows, listing_parser=parser)
+            def loaded(listing: Listing) -> None:
+                self.hooks.listing.load_rows(listing)
+                if inputs.is_bluray and listing.longest_playlist is not None:
+                    self.inspect_playlist(listing.longest_playlist)
+
+            self.start(command, on_listing=loaded, listing_parser=parser)
 
     def preview_selected(self) -> None:
         inputs = self.hooks.get_inputs()
@@ -433,21 +438,36 @@ class OperationController:
     def inspect_streams(self) -> None:
         inputs = self.hooks.get_inputs()
         if self.selection.requires_reinspection:
+            self.hooks.ui.log_inspect_action()
+            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+            return
+        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
+            self.hooks.ui.log_inspect_action()
+            self.hooks.runtime.log("Wait for the current operation before inspecting streams.")
+            return
+        selected = self.selected_for_copy(inputs)
+        if len(selected) != 1:
+            self.hooks.ui.log_inspect_action()
+            self.hooks.runtime.log("Select exactly one playlist to inspect its streams.")
+            return
+        self.inspect_playlist(selected[0])
+
+    def inspect_playlist(self, playlist: str) -> None:
+        inputs = self.hooks.get_inputs()
+        if self.selection.requires_reinspection:
             self.hooks.runtime.log("Inspect the current disc again before using its selections.")
             return
         self.hooks.ui.log_inspect_action()
-        if self.lifecycle.running or inputs.detecting:
+        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
             self.hooks.runtime.log("Wait for the current operation before inspecting streams.")
             return
         source = inputs.source
-        selected = self.selected_for_copy(inputs)
         if not source:
             self.hooks.runtime.log("Choose a source first.")
             return
-        if len(selected) != 1:
-            self.hooks.runtime.log("Select exactly one playlist to inspect its streams.")
+        if not inputs.is_bluray:
+            self.hooks.runtime.log("Choose a Blu-ray source before inspecting its tracks.")
             return
-        playlist = selected[0]
         saved = inputs.preferences
         previous = self.selection.begin_stream_inspection(playlist, saved)
         if self.selection.stream_playlist == playlist:

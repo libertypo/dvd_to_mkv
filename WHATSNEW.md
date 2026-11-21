@@ -1,93 +1,101 @@
 # What's new
 
+## 2026-11-21
+
+- Blu-ray inspection now shows your playlists and opens the tracks for the
+  longest one automatically. It's a helpful starting point, not necessarily
+  the main movie, and it won't be selected for copying unless you choose it.
+- Want to see another playlist's tracks? Pick it from the drop-down. The
+  Inspect Tracks button also follows that choice, independently of the
+  playlists you've checked for copying.
+- Unselected Blu-ray items are visible when you start. Show or hide them as
+  you like: your choice stays put while you inspect tracks or apply a profile.
+  Your saved choices are still respected.
+- Fixed some strange translation text that could appear in an empty playlist
+  chooser.
+- If an output check fails, the filename you entered now stays put.
+
 ## 2026-11-20
 
-- DVD stream listings now read FFprobe JSON, preserve Unicode and multiline
-  titles, and reject duplicate or out-of-range stream indexes. Formatted
-  listings fall back to tabs when UTF-8 alignment is unavailable.
-- DVD copies check for Python and `setsid` before preparing output. Blu-ray
-  copies check for required tools before sampling the disc to select a format.
-- Blu-ray stream listings replace control characters in display text and
-  check for MVC tools before probing 3D streams with FFprobe.
-- Media inspection reports confirmed validation timeouts with exit status
-  124. Copy cancellation stops lingering helpers, and publication failures
-  attempt rollback before cleaning up temporary files.
+- DVD track listings now handle accented and multiline titles better and reject
+  invalid or duplicate track numbers. If neat column alignment isn't available,
+  you'll still get a complete tab-separated list.
+- DVD copies now check for Python and `setsid` before preparing output.
+  Blu-ray copies check for required tools before choosing a format.
+- Blu-ray track listings clean up unusual control characters and check for the
+  tools needed to inspect 3D streams.
+- When a media check times out, the command reports it with exit status 124.
+  Cancelling a copy also stops lingering helpers, and failed output publication
+  attempts a rollback before cleaning up.
 
 ## 2026-11-19
 
-- Replaced Clear Hidden with Show unselected / Hide unselected for DVD streams,
-  Blu-ray playlists, and Blu-ray tracks. Inspection and profile application show
-  selected items by default, without changing copy selections when toggling.
-- Added empty-list guidance and Italian/Romanian translations for the filter.
-- Filtering out a focused item now moves keyboard focus to the next remaining
-  item (or the previous one at the end), instead of jumping to the first row.
-- Cancelling shutdown after a slow or failed preferences save now restores DVD
-  title selection.
-- Legacy file choosers now translate their titles and action buttons using the
-  selected GUI language. Cleared remaining GUI typing diagnostics.
-- Selecting a different DVD title in the GUI now automatically inspects its
-  streams. Title discovery and saved-title restoration do not start inspection.
-- Disabled DVD title selection during media detection so automatic inspection
-  cannot be skipped by an active probe.
-- The GUI rejects video extensions in Blu-ray filename stems before copy
-  confirmation.
-- Replaced inferred output-argument positions with command-builder metadata,
-  centralized DVD title state changes, and tightened GTK callback typing.
-- Updated GUI regression expectations for translation-aware dialogs, save
-  failures, and explicit DVD title inspection arguments.
+- Use Show unselected and Hide unselected to tidy up the lists without changing
+  what you've chosen to copy. Helpful messages explain when a filtered list is
+  empty, in English, Italian or Romanian.
+- Keyboard focus now moves to a nearby item when the focused item is hidden,
+  rather than jumping back to the start.
+- If you cancel closing the app while preferences are saving or after a save
+  fails, your DVD title choice is restored.
+- Older file choosers now use the selected language for their titles and buttons.
+- Pick a different DVD title and its tracks are inspected automatically. Finding
+  titles or restoring a saved choice doesn't start an inspection.
+- DVD title selection waits until media detection is finished, so that automatic
+  inspection doesn't get skipped.
+- The app now warns you before copy confirmation if a Blu-ray filename stem
+  includes a video extension.
+- Tidied up the GUI's command handling and added checks for dialogs, save
+  failures and DVD title inspection.
 
 ## 2026-11-18
 
-- Added Italian and Romanian tooltips for application buttons in the main
-  window and dialogs, with wording kept in one shared module.
-- Expanded Italian and Romanian GUI translations to cover Copy Summary,
-  Disc Details, verification and profile dialogs, operation status and progress, and
-  completion notifications.
-- Removed filename templates and their preview from the GUI. Standard output
-  naming and Copy Summary remain available.
+- More buttons now have helpful Italian and Romanian tooltips.
+- More of the app speaks Italian and Romanian, including Copy Summary, Disc
+  Details, profiles, verification, progress and notifications.
+- Removed filename templates and their preview from the app. You can still use
+  standard output names and check them in Copy Summary.
 
 ## 2026-11-16
 
-- Optional filename templates for DVD and Blu-ray with previews, automatic
-  playlist suffixes for generated-name collisions, and overwrite protection.
-- Optional DVD title discovery with duration, chapter and track hints; choose
-  one title for inspection, preview, copying and verification. Title 1 remains
-  available without `lsdvd`.
-- Blu-ray playlist labels also identify feature-length durations and the
-  longest listed duration. All hints remain advisory.
+- Added optional filename templates with previews for DVD and Blu-ray, with
+  help avoiding name clashes and overwriting. (These were later removed from
+  the GUI.)
+- Discover DVD titles and see their duration, chapters and tracks before
+  choosing one. Title 1 is still available if `lsdvd` isn't installed.
+- Blu-ray playlist labels now point out longer titles and the longest listed
+  duration. They're clues, not guarantees about which one is the movie.
 
 ## 2026-11-15
 
-- Background desktop notifications for completed or failed copies and verification;
-  clicking a notification returns to the application.
-- Copy Summary confirmation before extraction, showing source, playlists/tracks,
-  resolved output filenames, and estimated peak space alongside available space.
-- Fixed missing language labels in newly copied Blu-ray MKVs: audio and subtitle
-  tracks now keep the disc's three-letter language codes, matched by stream PID.
-  This works with selected tracks, copy-all, and shared-PID companion tracks.
-- Missing disc language codes produce a warning rather than guessed labels.
-  Invalid language metadata stops the copy instead of repeatedly recopying it.
-  Existing MKVs are not repaired, and original M2TS output is unchanged.
-- The Manjaro/Arch package has been rebuilt as `2026.11.15-1`.
+- The app can let you know when a copy or verification finishes or fails.
+  Click the notification to return to the window.
+- Before copying, check the source, selected items, filenames and estimated
+  space needed in the new Copy Summary.
+- Newly copied Blu-ray MKVs now keep the disc's audio and subtitle language
+  labels, including when you copy all tracks or tracks share an ID.
+- If a language code is missing, you'll see a warning instead of a guessed
+  label. Invalid language information stops the copy. Existing MKVs aren't
+  repaired, and original M2TS copies are unchanged.
+- Rebuilt the Manjaro/Arch package as `2026.11.15-1`.
 
 ## 2026-11-12
 
-- Optional verification of an existing copy against its original source.
+- You can now check an existing copy against its original source.
 
 ## 2026-11-11
 
-- Bugs squashed.
-- Clear All workspace reset.
-- Complete local Manjaro/Arch package and application-menu entry.
-- Optical-drive discovery and selection.
-- Optional direct-disc Preview.
-- Development GTK mockup with sample Blu-ray content in the source checkout.
+- Squashed some bugs.
+- Clear All gives you a fresh workspace.
+- Added a local Manjaro/Arch package and an application-menu entry.
+- Find and select optical drives from the app.
+- Preview directly from the disc if you like.
+- Added a development GTK mockup with sample Blu-ray content.
 
 ## 2026-11-10
 
-- Saved language profiles and remembered source selections.
-- Disc Details overview.
-- Resizable side-by-side Activity and workflow layout.
-- Blu-ray chapter preservation.
-- Automatic, MKV, and original M2TS Blu-ray output choices.
-- Free-space checks before copying.
+- Save language profiles and remember your choices for each source.
+- Take a closer look with Disc Details.
+- Resize the side-by-side Activity and workflow panes.
+- Keep Blu-ray chapters in your copies.
+- Choose Automatic, MKV or original M2TS for Blu-ray output.
+- Check free space before copying.

@@ -49,6 +49,7 @@ class Listing:
     invalid: int = 0
     duplicates: int = 0
     omitted_ids: set[str] = field(default_factory=set[str])
+    longest_playlist: str | None = None
 
 
 def parse_playlists(output: str, *, translate: Callable[[str], str] = identity) -> Listing:
@@ -57,6 +58,7 @@ def parse_playlists(output: str, *, translate: Callable[[str], str] = identity) 
     hints: dict[str, list[str]] = {}
     durations: dict[str, int] = {}
     seen_duration_ids: set[str] = set()
+    reported_longest: str | None = None
     for line in output.splitlines():
         fields = line.split("\t")
         if (
@@ -67,6 +69,8 @@ def parse_playlists(output: str, *, translate: Callable[[str], str] = identity) 
             label = "main feature candidate" if fields[0] == "# main-playlist" else "longest candidate"
             if label not in labels:
                 labels.append(label)
+            if fields[0] == "# longest-playlist":
+                reported_longest = str(int(fields[1]))
         elif len(fields) == 3 and PLAYLIST_ID.fullmatch(fields[0]):
             duration = PLAYLIST_DURATION.fullmatch(fields[1].strip())
             identifier = str(int(fields[0]))
@@ -126,6 +130,15 @@ def parse_playlists(output: str, *, translate: Callable[[str], str] = identity) 
             ))
         else:
             listing.invalid += 1
+    displayed = {identifier for identifier, _label in listing.rows}
+    if reported_longest in displayed and reported_longest not in durations:
+        listing.longest_playlist = reported_longest
+    elif durations:
+        listing.longest_playlist = max(durations, key=durations.__getitem__)
+    elif reported_longest in displayed:
+        listing.longest_playlist = reported_longest
+    elif len(listing.rows) == 1:
+        listing.longest_playlist = listing.rows[0][0]
     return listing
 
 

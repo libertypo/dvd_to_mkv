@@ -33,7 +33,11 @@ from dvdvideo.gui_translation import identity
 
 
 class ListingPresenter(Protocol):
+    show_unselected: bool
+
     def render_rows(self, rows: Iterable[tuple[str, str, bool]]) -> None: ...
+
+    def set_show_unselected(self, show: bool) -> None: ...
 
     def render_stream_rows(
         self, playlist: str, rows: Iterable[tuple[str, str]], selected: Collection[str],
@@ -70,7 +74,8 @@ class ListingWorkflow:
         self.get_context = get_context
         self.hooks = hooks
 
-    def load_rows(self, output: str | Listing) -> None:
+    def load_rows(self, output: str | Listing) -> Listing:
+        show_unselected = self.presenter.show_unselected
         requires_reinspection = self.selection.requires_reinspection
         try:
             self.hooks.clear_rows()
@@ -119,6 +124,8 @@ class ListingWorkflow:
             for identifier, label in listing.rows
         ]
         self.presenter.render_rows(rows)
+        if context.is_bluray:
+            self.presenter.set_show_unselected(show_unselected)
         if rows:
             self.selection.requires_reinspection = False
         kind = "playlists" if context.is_bluray else "streams"
@@ -152,9 +159,11 @@ class ListingWorkflow:
         elif context.is_bluray:
             if settings is None:
                 self.hooks.save()
-            self.hooks.log("Select one playlist and click Inspect Tracks to list its video, audio, and subtitles.")
+            if listing.longest_playlist is None:
+                self.hooks.log("Choose a playlist to inspect its video, audio, and subtitles.")
         else:
             self.hooks.save()
+        return listing
 
     def load_stream_rows(
         self, playlist: str, output: str | Listing, selected: list[str] | None = None,
