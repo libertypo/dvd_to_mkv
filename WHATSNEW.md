@@ -1,5 +1,18 @@
 # What's new
 
+## 2026-11-21
+
+- Inspect Tracks now always uses the playlist in the tracks drop-down, without
+  changing or depending on playlists checked for copying.
+- Failed copy preflight no longer changes the output filename in the GUI.
+- Fixed translation catalog metadata appearing in the empty playlist chooser.
+- Blu-ray inspection now shows playlists and automatically inspects tracks for
+  the longest candidate without selecting it for copying. Choose another
+  playlist in the tracks drop-down to inspect it.
+- Blu-ray lists initially show unselected items; the manual Show/Hide choice
+  persists during track inspection and profile application. Saved choices are
+  retained, and profiles continue to select tracks rather than playlists.
+
 ## 2026-11-20
 
 - DVD stream listings now read FFprobe JSON, preserve Unicode and multiline

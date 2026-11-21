@@ -243,7 +243,10 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
                         clear_playlists=False, notify_empty=False,
                     ),
                     update_stream_format=lambda playlist: self.update_stream_format(playlist),
-                    reset_visibility=lambda: self.listing_view.set_show_unselected(False),
+                    reset_visibility=lambda: (
+                        None if self.view.bluray_button.get_active()
+                        else self.listing_view.set_show_unselected(False)
+                    ),
                 ),
                 log=lambda message: self.log(message),
             ),
@@ -659,6 +662,8 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         )
         requires_reinspection = self.selection.requires_reinspection
         self.clear_rows()
+        if mode_changed:
+            self.listing_view.set_show_unselected(is_bluray)
         if self.source_workflow.applying_detection:
             self.selection.requires_reinspection = requires_reinspection
         elif mode_changed:
@@ -865,8 +870,17 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             dialog.destroy()
 
     def clear_rows(self) -> None:
+        show_unselected = self.listing_view.show_unselected
         self.selection.selection_state.clear()
         self.listing_view.clear_rows()
+        if self.view.bluray_button.get_active():
+            self.listing_view.set_show_unselected(show_unselected)
+        combo = self.view.track_playlist_combo
+        combo.handler_block_by_func(self.on_track_playlist_changed)
+        try:
+            combo.remove_all()
+        finally:
+            combo.handler_unblock_by_func(self.on_track_playlist_changed)
         self.clear_stream_rows()
         self.selection.clear()
         self.applying_stream_format = False
@@ -1097,7 +1111,25 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         )
 
     def inspect_streams(self, *_args: Any) -> None:
-        self.operation_controller.inspect_streams()
+        playlist = self.view.track_playlist_combo.get_active_id()
+        if playlist is None:
+            self.log_inspect_action()
+            self.log("Choose a playlist to inspect its video, audio, and subtitles.")
+            return
+        self.operation_controller.inspect_playlist(playlist)
+
+    def on_track_playlist_changed(self, *_args: Any) -> None:
+        playlist = self.view.track_playlist_combo.get_active_id()
+        if playlist is None:
+            self.clear_stream_rows()
+            return
+        if playlist == self.selection.stream_playlist:
+            return
+        if self.lifecycle.running or self.lifecycle.closing or self.source_workflow.detecting:
+            self.log("Wait for the current operation before choosing a playlist.")
+            return
+        self.clear_stream_rows()
+        self.operation_controller.inspect_playlist(playlist)
 
     def show_verify_dialog(self, *_args: Any) -> None:
         self.operation_controller.show_verify_dialog()
@@ -1148,6 +1180,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             self.view.source_entry.get_parent(), self.view.output_entry.get_parent(),
             self.view.name_row, self.view.minlength_row, self.view.profile_row, self.view.list_box, self.view.stream_list_box,
             self.view.dvd_title_row,
+            self.view.track_playlist_combo,
             self.view.dvd_button, self.view.bluray_button, self.view.select_all_items_button,
             self.view.show_unselected_button,
             self.view.select_all_streams_button,
@@ -1420,12 +1453,29 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         self.close_timer = GLib.timeout_add(100, self.finish_close)
 
     def load_rows(self, output: str | Listing) -> None:
-        self.listing_workflow.load_rows(output)
+        listing = self.listing_workflow.load_rows(output)
+        if self.view.bluray_button.get_active():
+            combo = self.view.track_playlist_combo
+            combo.handler_block_by_func(self.on_track_playlist_changed)
+            try:
+                combo.remove_all()
+                for identifier, label in listing.rows:
+                    combo.append(identifier, clean_label(label))
+                combo.set_active_id(listing.longest_playlist)
+            finally:
+                combo.handler_unblock_by_func(self.on_track_playlist_changed)
 
     def load_stream_rows(
         self, playlist: str, output: str | Listing, selected: list[str] | None = None
     ) -> None:
         self.listing_workflow.load_stream_rows(playlist, output, selected)
+        if self.selection.stream_playlist == playlist:
+            combo = self.view.track_playlist_combo
+            combo.handler_block_by_func(self.on_track_playlist_changed)
+            try:
+                combo.set_active_id(playlist)
+            finally:
+                combo.handler_unblock_by_func(self.on_track_playlist_changed)
 
     def on_stream_toggled(self, *_args: Any) -> None:
         if self.applying_stream_format or self.selection.applying_profile:

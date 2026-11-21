@@ -168,6 +168,12 @@ msgstr "Tracce"
 msgid "Select one playlist and click Inspect Tracks"
 msgstr "Seleziona una playlist e fai clic su Analizza tracce"
 
+msgid "Choose a playlist to inspect its tracks"
+msgstr "Scegli una playlist per analizzarne le tracce"
+
+msgid "Playlist for track inspection"
+msgstr "Playlist per l'analisi delle tracce"
+
 msgid "Blu-ray streams"
 msgstr "Flussi Blu-ray"
 

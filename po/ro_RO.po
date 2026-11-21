@@ -170,6 +170,12 @@ msgstr "Piste"
 msgid "Select one playlist and click Inspect Tracks"
 msgstr "Selectează un playlist și apasă Analizează pistele"
 
+msgid "Choose a playlist to inspect its tracks"
+msgstr "Alege un playlist pentru a-i analiza pistele"
+
+msgid "Playlist for track inspection"
+msgstr "Playlist pentru analiza pistelor"
+
 msgid "Blu-ray streams"
 msgstr "Fluxuri Blu-ray"
 
