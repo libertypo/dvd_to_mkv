@@ -279,6 +279,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
                     set_output_path=self.view.output_entry.set_text,
                     notify_completion=self.notify_completion,
                     translate=lambda message: self.translate(message),
+                    set_dvd_batch_count=self.set_dvd_batch_count,
                 ),
                 runtime=OperationRuntimeHooks(
                     cancel_drive_scan=self.source_workflow.cancel_drive_scan,
@@ -371,6 +372,10 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             selected=tuple(self.listing_view.active_ids()),
             dvd_title=self.selection.dvd_title,
             language=self.active_gui_language,
+            profile=(
+                self.preferences.get_profile(self.view.profile_combo.get_active_id())
+                if self.preferences is not None else None
+            ),
         )
 
     def listing_context(self) -> ListingContext:
@@ -664,10 +669,9 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
         self.clear_rows()
         if mode_changed:
             self.listing_view.set_show_unselected(is_bluray)
-        if self.source_workflow.applying_detection:
-            self.selection.requires_reinspection = requires_reinspection
-        elif mode_changed:
-            self.selection.reinspection_edits = None
+            if not self.source_workflow.applying_detection:
+                self.selection.reinspection_edits = None
+        self.selection.requires_reinspection = requires_reinspection
         self.suggest_name()
 
     def on_manual_mode(self, *_args: Any) -> None:
@@ -732,10 +736,15 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             self.set_dvd_title_choices([], "1")
 
     def clear_device_selections(self) -> None:
+        self.source_workflow.source_generation += 1
+        self.invalidate_choosers()
         self.clear_rows()
         self.set_dvd_title_choices([], "1")
         self.selection.reinspection_edits = None
         self.log("Drive refresh cleared disc selections; inspect the current disc again.")
+        if self.operation_controller.dvd_batch is not None:
+            self.view.dvd_batch_label.set_text(self.translate("DVD batch needs preparation again"))
+            self.log("The prepared DVD batch no longer matches the drive. Prepare it again or clear the batch.")
 
     def apply_detected_media(self, media: str) -> None:
         button: Gtk.ToggleButton = self.view.bluray_button if media == "bluray" else self.view.dvd_button
@@ -888,6 +897,8 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
     def clear_all(self, *_args: Any) -> None:
         if self.lifecycle.running or self.lifecycle.closing:
             return
+        if self.operation_controller.dvd_batch is not None:
+            self.operation_controller.clear_dvd_batch()
         self.source_workflow.source_generation += 1
         self.invalidate_choosers()
         self.cancel_detection()
@@ -998,6 +1009,93 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
     def discover_dvd_titles(self, *_args: Any) -> None:
         self.operation_controller.discover_dvd_titles()
 
+    def choose_dvd_batch(self, *_args: Any) -> None:
+        def discovered(listing: Listing) -> None:
+            self.load_dvd_titles(listing)
+            inputs = self.operation_inputs()
+            if inputs.profile is None or not (
+                inputs.profile.audio_languages or inputs.profile.subtitle_languages
+            ):
+                dialog = ResponseWindow(title=self.translate("Language profile required"), transient_for=self)
+                content = dialog.get_content_area()
+                content.set_margin_top(12)
+                content.set_margin_start(12)
+                content.set_margin_end(12)
+                content.append(Gtk.Label(
+                    label=self.translate(
+                        "Choose or create a profile with audio or subtitle languages before preparing a DVD batch."
+                    ),
+                    wrap=True, xalign=0,
+                ))
+                dialog.add_button(
+                    self.translate("Close"), Gtk.ResponseType.CLOSE, tooltip=self.translate("Close"),
+                )
+                dialog.connect("response", lambda window, _response: window.destroy())
+                dialog.present()
+                return
+            dialog = ResponseWindow(title=self.translate("Select DVD Titles"), transient_for=self)
+            dialog.set_default_size(700, 500)
+            content = dialog.get_content_area()
+            content.set_margin_top(12)
+            content.set_margin_start(12)
+            content.set_margin_end(12)
+            content.append(Gtk.Label(
+                label=self.translate(
+                    "Select titles to copy. Each title is inspected separately and uses the active language profile."
+                ),
+                wrap=True, xalign=0,
+            ))
+            rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            checkboxes: list[tuple[str, Gtk.CheckButton]] = []
+            for identifier, label in listing.rows:
+                checkbox = Gtk.CheckButton(label=clean_label(label))
+                rows.append(checkbox)
+                checkboxes.append((identifier, checkbox))
+            scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+            scroll.set_child(rows)
+            content.append(scroll)
+            select_all = Gtk.Button(label=self.translate("Select All"), halign=Gtk.Align.START)
+            def select_titles(_button: Gtk.Button) -> None:
+                for _identifier, checkbox in checkboxes:
+                    checkbox.set_active(True)
+
+            select_all.connect("clicked", select_titles)
+            content.append(select_all)
+            dialog.add_button(self.translate("Cancel"), Gtk.ResponseType.CANCEL, tooltip=self.translate("Cancel"))
+            dialog.add_button(
+                self.translate("Prepare Batch"), Gtk.ResponseType.OK,
+                tooltip=self.translate("Inspect the selected titles and prepare the batch."),
+            )
+
+            def response(_dialog: ResponseWindow, result: int) -> None:
+                if result == Gtk.ResponseType.OK:
+                    selected = tuple(identifier for identifier, checkbox in checkboxes if checkbox.get_active())
+                    if not selected:
+                        self.log("Select at least one DVD title.")
+                        return
+                    if self.operation_inputs() != inputs:
+                        self.log("DVD batch not started because the source or settings changed.")
+                        dialog.destroy()
+                        return
+                    dialog.destroy()
+                    self.operation_controller.prepare_dvd_batch(selected)
+                else:
+                    dialog.destroy()
+
+            dialog.connect("response", response)
+            dialog.present()
+
+        self.operation_controller.discover_dvd_titles(discovered)
+
+    def set_dvd_batch_count(self, count: int) -> None:
+        self.view.dvd_batch_label.set_text(
+            self.translate("DVD batch prepared: {count} title(s)").format(count=count)
+        )
+        self.view.dvd_batch_row.set_visible(count > 0)
+
+    def clear_dvd_batch(self, *_args: Any) -> None:
+        self.operation_controller.clear_dvd_batch()
+
     def set_dvd_title_choices(self, rows: list[tuple[str, str]], title: str) -> None:
         combo = self.view.dvd_title_combo
         combo.handler_block_by_func(self.on_dvd_title_changed)
@@ -1038,10 +1136,12 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
                 combo.handler_unblock_by_func(self.on_dvd_title_changed)
             self.log("Wait for the current operation before selecting a DVD title.")
             return
+        previous_inputs = self.operation_inputs()
         self.source_workflow.source_generation += 1
         self.invalidate_choosers()
         self.clear_rows()
         self.selection.change_dvd_title(title)
+        self.operation_controller.preserve_batch_on_title_change(previous_inputs)
         self.save_current_source_preferences()
         self.log(f"DVD title {title} selected; inspecting its streams.")
         self.inspect()
@@ -1180,6 +1280,7 @@ class DvdToMkvWindow(Gtk.ApplicationWindow):
             self.view.source_entry.get_parent(), self.view.output_entry.get_parent(),
             self.view.name_row, self.view.minlength_row, self.view.profile_row, self.view.list_box, self.view.stream_list_box,
             self.view.dvd_title_row,
+            self.view.dvd_batch_row,
             self.view.track_playlist_combo,
             self.view.dvd_button, self.view.bluray_button, self.view.select_all_items_button,
             self.view.show_unselected_button,
@@ -1514,16 +1615,21 @@ class DvdToMkvApplication(Gtk.Application):
         window.present()
 
     def request_shutdown(self) -> bool:
-        window = self.props.active_window
-        if isinstance(window, DvdToMkvWindow):
-            if not window.lifecycle.closing:
-                pending = window.selection.restored_source
-                if pending is not None and pending.save_pending:
-                    window.on_close_request()
-                else:
-                    window.begin_close()
-        else:
+        windows = [
+            window for window in self.get_windows()
+            if isinstance(window, DvdToMkvWindow)
+        ]
+        if not windows:
             self.quit()
+            return True
+        for window in windows:
+            if window.lifecycle.closing:
+                continue
+            pending = window.selection.restored_source
+            if pending is not None and pending.save_pending:
+                window.on_close_request()
+            else:
+                window.begin_close()
         return True
 
 

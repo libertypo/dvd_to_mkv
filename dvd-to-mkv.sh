@@ -123,6 +123,9 @@ temporary_directory=
 workspace_parent_fd=
 workspace_parent=
 publication_pending=false
+dvd_output_committed=false
+gui_dvd_batch=false
+dvd_batch_cancelled_after_publication=false
 pending_output=
 pending_chapter_sidecar=
 pending_chapter_source=
@@ -196,6 +199,16 @@ cleanup() {
     done
     if [[ -n $temporary_directory ]]; then
         rm -rf -- "$temporary_directory" || cleanup_failed=true
+    fi
+    if [[ $dvd_batch_cancelled_after_publication == true ]]; then
+        if [[ $cleanup_failed == true ]]; then
+            echo 'DVD output was published, but cleanup failed; temporary files may remain.' >&2
+        fi
+        exit 75
+    fi
+    if [[ $gui_dvd_batch == true ]] && (( status == 75 )); then
+        echo 'Copy failed with a reserved GUI batch status.' >&2
+        exit 1
     fi
     if (( status == 0 )) && [[ $cleanup_failed == true ]]; then
         exit 1
@@ -366,6 +379,10 @@ handle_signal() {
     trap - INT TERM
     if [[ -n $active_process_group ]]; then
         stop_active_process_group
+    fi
+    if [[ $gui_dvd_batch == true && $dvd_output_committed == true ]]; then
+        dvd_batch_cancelled_after_publication=true
+        exit 75
     fi
     exit "$status"
 }
@@ -590,7 +607,7 @@ publish_output() {
         fi
         printf 'Copied: %s\n' "$1"
     else
-        publication_pending=false
+        publication_pending=false dvd_output_committed=true
     fi
     rm -rf "$temporary_directory"
     temporary_directory=
@@ -676,6 +693,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --bluray)
             media_type=bluray
+            shift
+            ;;
+        --gui-dvd-batch)
+            gui_dvd_batch=true
             shift
             ;;
         --list-streams)
@@ -848,6 +869,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ $gui_dvd_batch == true && ($media_type != dvd || $list_titles == true || $list_streams == true || $disc_details == true || $list_playlists == true) ]]; then
+    echo '--gui-dvd-batch is only supported for DVD copying.' >&2
+    exit 2
+fi
 
 if [[ $list_titles == true && ($media_type == bluray || $list_streams == true || $list_playlists == true || $disc_details == true || ${#selected_streams[@]} -ne 0 || $retries_set == true || $# -ne 1) ]]; then
     echo '--list-titles requires one DVD input and cannot be combined with other inspection or copy options.' >&2

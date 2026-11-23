@@ -48,6 +48,28 @@ New lists start with nothing selected unless you have saved choices or your
 profile picks matching tracks. Use **Select All** or **Select All Tracks**
 when you want everything.
 
+## Copy several DVD titles
+
+For an episode disc, choose a profile with audio or subtitle languages and
+an output MKV filename, then select **Batch Titles**. Title discovery requires
+`lsdvd`. Choose the titles and select **Prepare Batch**; this only prepares
+them. Select **Copy Selected** to review the tracks and output paths, then
+**Start Copy** to begin. Cancelling the confirmation keeps the batch.
+
+Titles are inspected separately and copied sequentially. Titles that fail
+are reported; the others continue. Cancelling stops the batch, keeps completed
+copies and leaves uncompleted prepared titles available for another attempt.
+When the copier confirms that a title was published before cancellation during
+cleanup, it is counted as completed; a forced stop can leave publication
+uncertain. Existing files are never overwritten.
+
+Space estimates are per title, not for the entire batch, and are checked
+again before each copy. **Clear Batch** returns to single-title copying.
+Changing the source, output filename or profile requires preparing the batch
+again or clearing it. Refreshing an optical drive invalidates its batch; disc
+changes are not detected automatically, so refresh after changing discs and
+select the drive again or choose the media type manually.
+
 ## MKV or M2TS?
 
 For regular 2D video, MKV is the usual choice. Blu-rays offer three options:

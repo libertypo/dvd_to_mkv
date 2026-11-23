@@ -61,7 +61,7 @@ class MediaProgress:
             line = self.pending.strip()
             self.pending = ""
             if (
-                line.startswith(("Input #0,", "Comparing ", "Retrying "))
+                line.startswith(("Input #0,", "Comparing ", "Retrying ", "Copying DVD title "))
                 or BLURAY_PHASE.match(line)
             ):
                 self.duration = self.position = self.speed = None
