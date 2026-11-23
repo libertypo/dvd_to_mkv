@@ -21,12 +21,14 @@ import subprocess
 import threading
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
 from dvdvideo.disc_details import parse_disc_details
-from dvdvideo.gui_listing import Listing
+from dvdvideo.gui_commands import CommandInput, prepare_command, validate_dvd_title
+from dvdvideo.gui_listing import Listing, parse_dvd_streams
+from dvdvideo.gui_preferences import Profile, select_tracks
 from dvdvideo.gui_preflight import run_operation_preflight
 from dvdvideo.gui_support import (
     ManagedProcess,
@@ -37,6 +39,8 @@ from dvdvideo.gui_support import (
 from dvdvideo.gui_translation import identity
 from dvdvideo.preview import play_preview
 from dvdvideo.verify_copy import run_verification as verify_copy
+
+DVD_BATCH_PUBLISHED_CANCELLED = 75
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,14 @@ class VerificationSpec:
     is_bluray: bool
     title: str
     streams: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DvdBatchJob:
+    title: str
+    streams: tuple[str, ...]
+    output: str
+    track_summary: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +89,7 @@ class OperationRequest:
     quiet_stdout: bool = False
     language: str = "en"
     output_argument_index: int | None = None
+    dvd_batch_copy: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,6 +98,10 @@ class OperationResult:
     output: str = ""
     listing: Listing | None = None
     deliver_success: bool = False
+    batch_jobs: tuple[DvdBatchJob, ...] = ()
+    batch_failures: tuple[str, ...] = ()
+    batch_completed: tuple[str, ...] = ()
+    copy_committed: bool = False
 
 
 @dataclass(frozen=True)
@@ -97,6 +114,7 @@ class OperationHooks:
     output_changed: Callable[[str], None]
     confirm_non_device: Callable[[str], None] = lambda _source: None
     translate: Callable[[str], str] = identity
+    batch_title_started: Callable[[str, int, int], None] = lambda _title, _current, _total: None
 
 
 @dataclass
@@ -240,11 +258,14 @@ def execute_operation(
             if result.stderr:
                 hooks.log(result.stderr)
         elif request.output is not None:
+            if request.dvd_batch_copy:
+                command.insert(1, "--gui-dvd-batch")
             with copy_command_arguments(command) as (copy_command, pass_fds):
                 hooks.log("$ " + " ".join(copy_command))
                 result = operation.run(
                     copy_command, collect=False, log=hooks.queue_log,
-                    abandon_unresponsive=True, pass_fds=pass_fds,
+                    abandon_unresponsive=True, pass_fds=pass_fds, preserve_success_on_cancel=True,
+                    cancelled_exit_code=DVD_BATCH_PUBLISHED_CANCELLED if request.dvd_batch_copy else None,
                 )
         else:
             result = operation.run(
@@ -252,6 +273,12 @@ def execute_operation(
                 stderr_log=hooks.queue_log if request.quiet_stdout else None,
                 timeout=request.timeout, abandon_unresponsive=True,
             )
+        if (
+            request.dvd_batch_copy and result.returncode == DVD_BATCH_PUBLISHED_CANCELLED
+            and operation.cancelled.is_set()
+        ):
+            hooks.log("DVD output was published before cancellation; cleanup may be incomplete.")
+            return OperationResult("Cancelled", copy_committed=True)
         output = result.stdout
         listing = None
         if request.quiet_stdout and result.returncode:
@@ -291,3 +318,197 @@ def execute_operation(
     except Exception:  # noqa: BLE001 - worker boundary reports unexpected errors and releases busy state
         hooks.log("Unexpected worker error:\n" + traceback.format_exc().rstrip())
         return OperationResult("Failed")
+
+
+def prepare_dvd_batch(
+    request: OperationRequest, titles: tuple[str, ...], profile: Profile,
+    operation: ManagedProcess, hooks: OperationHooks,
+) -> OperationResult:
+    if not profile.audio_languages and not profile.subtitle_languages:
+        hooks.log("Choose a profile with audio or subtitle languages before preparing a DVD batch.")
+        return OperationResult("Failed")
+    if not request.output or not request.output.path:
+        hooks.log("Choose an output MKV before preparing a DVD batch.")
+        return OperationResult("Failed")
+    output = Path(request.output.path)
+    if not output.name or output.suffix.lower() != ".mkv":
+        hooks.log("Choose an output filename ending in .mkv for the DVD batch.")
+        return OperationResult("Failed")
+    jobs: list[DvdBatchJob] = []
+    failures: list[str] = []
+    summaries: list[str] = []
+    try:
+        if not titles or len(set(titles)) != len(titles):
+            raise ValueError("Select one or more distinct DVD titles.")
+        for title in titles:
+            validate_dvd_title(title)
+            operation.check_cancelled()
+            hooks.log(f"Inspecting DVD title {title} for batch.")
+            inspection = prepare_command(CommandInput(
+                request.script_path, request.source, False, inspect=True, dvd_title=title,
+            ))
+            result = execute_operation(replace(
+                request, command=inspection.arguments, output=None, collect=True,
+                summary_only=False, listing_parser=parse_dvd_streams, dvd_title=title,
+                output_argument_index=None,
+            ), operation, hooks)
+            if result.status == "Cancelled":
+                return result
+            listing = result.listing
+            if result.status != "Completed" or listing is None or not listing.tracks or listing.invalid or listing.duplicates:
+                hooks.log(f"DVD title {title}: track inspection failed or returned invalid data.")
+                failures.append(title)
+                continue
+            streams = tuple(select_tracks(profile, listing.tracks))
+            if not streams:
+                hooks.log(f"DVD title {title}: the profile selected no tracks.")
+                failures.append(title)
+                continue
+            path = str(output.with_name(f"{output.stem}-title-{int(title):02d}.mkv"))
+            plan = prepare_command(CommandInput(
+                request.script_path, request.source, False, output=path,
+                selected=streams, dvd_title=title,
+            ))
+            spec = OutputSpec(path, False, "", (), ())
+            result = execute_operation(replace(
+                request, command=plan.arguments, output=spec, collect=True,
+                summary_only=True, listing_parser=None, dvd_title=title,
+                output_argument_index=plan.output_index,
+            ), operation, hooks)
+            if result.status == "Cancelled":
+                return result
+            if result.status != "Completed":
+                hooks.log(f"DVD title {title}: copy preflight failed.")
+                failures.append(title)
+                continue
+            tracks = {track.identifier: track for track in listing.tracks}
+            descriptions = [
+                f"  {identifier} - {tracks[identifier].kind}, "
+                f"{tracks[identifier].language or hooks.translate('language unspecified')}"
+                for identifier in streams
+            ]
+            track_summary = hooks.translate("Selected tracks") + ":\n" + "\n".join(descriptions)
+            if not any(tracks[identifier].kind == "audio" for identifier in streams):
+                warning = hooks.translate(
+                    "Warning: no audio track matched the profile for DVD title {title}; "
+                    "the output will have no audio."
+                    if profile.audio_languages else
+                    "Warning: no audio track was selected for DVD title {title}; "
+                    "the output will have no audio."
+                ).format(title=title)
+                hooks.log(warning)
+                track_summary += "\n" + warning
+            summaries.append(result.output + "\n" + track_summary)
+            jobs.append(DvdBatchJob(title, streams, path, track_summary))
+        if not jobs:
+            hooks.log("No DVD titles passed batch preparation.")
+            return OperationResult("Failed", batch_failures=tuple(failures))
+        summary = (
+            hooks.translate(
+                "DVD batch: titles are copied sequentially. Space estimates are per title, "
+                "not for the whole batch; free space and output paths are checked again for each copy."
+            ) + "\n\n"
+            + "\n\n".join(summaries)
+        )
+        if failures:
+            summary += "\n\n" + hooks.translate("Titles skipped during preparation: {titles}").format(
+                titles=", ".join(failures),
+            )
+        return OperationResult(
+            "Completed", summary, deliver_success=True,
+            batch_jobs=tuple(jobs), batch_failures=tuple(failures),
+        )
+    except OperationCancelled:
+        hooks.log("DVD batch preparation cancelled; no copies were started.")
+        return OperationResult("Cancelled")
+    except (OSError, ValueError) as error:
+        hooks.log(f"Cannot prepare DVD batch: {error}")
+        return OperationResult("Failed")
+
+
+def review_dvd_batch(
+    request: OperationRequest, jobs: tuple[DvdBatchJob, ...], failures: tuple[str, ...],
+    operation: ManagedProcess, hooks: OperationHooks,
+) -> OperationResult:
+    ready: list[DvdBatchJob] = []
+    skipped: list[str] = []
+    summaries: list[str] = []
+    for job in jobs:
+        if operation.cancelled.is_set():
+            return OperationResult("Cancelled")
+        plan = prepare_command(CommandInput(
+            request.script_path, request.source, False, output=job.output,
+            selected=job.streams, dvd_title=job.title,
+        ))
+        result = execute_operation(replace(
+            request, command=plan.arguments, output=OutputSpec(job.output, False, "", (), ()),
+            collect=True, summary_only=True, listing_parser=None, dvd_title=job.title,
+            output_argument_index=plan.output_index,
+        ), operation, hooks)
+        if result.status == "Cancelled":
+            return result
+        if result.status != "Completed":
+            hooks.log(f"DVD title {job.title}: copy preflight failed; it remains in the batch.")
+            skipped.append(job.title)
+            continue
+        ready.append(job)
+        summaries.append(result.output + "\n" + job.track_summary)
+    if not ready:
+        hooks.log("No DVD titles passed copy preflight; the prepared batch was kept.")
+        return OperationResult("Failed")
+    summary = (
+        hooks.translate(
+            "DVD batch: titles are copied sequentially. Space estimates are per title, "
+            "not for the whole batch; free space and output paths are checked again for each copy."
+        ) + "\n\n" + "\n\n".join(summaries)
+    )
+    if failures:
+        summary += "\n\n" + hooks.translate("Titles skipped during preparation: {titles}").format(
+            titles=", ".join(failures),
+        )
+    if skipped:
+        summary += "\n\n" + hooks.translate("Titles skipped during copy preflight (kept in batch): {titles}").format(
+            titles=", ".join(skipped),
+        )
+    return OperationResult(
+        "Completed", summary, deliver_success=True,
+        batch_jobs=tuple(ready), batch_failures=failures + tuple(skipped),
+    )
+
+
+def execute_dvd_batch(
+    request: OperationRequest, jobs: tuple[DvdBatchJob, ...], failures: tuple[str, ...],
+    operation: ManagedProcess, hooks: OperationHooks,
+) -> OperationResult:
+    failed = list(failures)
+    completed: list[str] = []
+    for index, job in enumerate(jobs, 1):
+        if operation.cancelled.is_set():
+            hooks.log("DVD batch cancelled. Completed copies were retained.")
+            return OperationResult("Cancelled", batch_completed=tuple(completed))
+        hooks.batch_title_started(job.title, index, len(jobs))
+        hooks.log(f"Copying DVD title {job.title} ({index}/{len(jobs)}).")
+        plan = prepare_command(CommandInput(
+            request.script_path, request.source, False, output=job.output,
+            selected=job.streams, dvd_title=job.title,
+        ))
+        result = execute_operation(replace(
+            request, command=plan.arguments, output=OutputSpec(job.output, False, "", (), ()),
+            collect=False, summary_only=False, dvd_title=job.title, listing_parser=None,
+            output_argument_index=plan.output_index, dvd_batch_copy=True,
+        ), operation, hooks)
+        if result.status == "Cancelled":
+            if result.copy_committed:
+                completed.append(job.title)
+            hooks.log("DVD batch cancelled. Completed copies were retained.")
+            return OperationResult("Cancelled", batch_completed=tuple(completed))
+        if result.status == "Completed":
+            completed.append(job.title)
+        else:
+            failed.append(job.title)
+            hooks.log(f"DVD title {job.title} failed; continuing with the remaining titles.")
+    hooks.log("DVD batch completed titles: " + (", ".join(completed) if completed else "none"))
+    if failed:
+        hooks.log("DVD batch failed or skipped titles: " + ", ".join(failed))
+        return OperationResult("Failed", batch_failures=tuple(failed), batch_completed=tuple(completed))
+    return OperationResult("Completed", batch_completed=tuple(completed))

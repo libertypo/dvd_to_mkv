@@ -16,6 +16,75 @@ msgstr ""
 msgid "Restart to apply the language. Some messages remain in English."
 msgstr "Repornește pentru a aplica limba. Unele mesaje rămân în engleză."
 
+msgid "Batch Titles"
+msgstr "Titluri multiple"
+
+msgid "Clear Batch"
+msgstr "Șterge lotul"
+
+msgid "Discover and select DVD titles to copy sequentially using the active language profile."
+msgstr "Descoperă și selectează titlurile DVD de copiat secvențial folosind profilul lingvistic activ."
+
+msgid "Discard the prepared DVD batch."
+msgstr "Elimină lotul DVD pregătit."
+
+msgid "DVD batch prepared: {count} title(s)"
+msgstr "Lot DVD pregătit: {count} titluri"
+
+msgid "Select DVD Titles"
+msgstr "Selectează titlurile DVD"
+
+msgid "Select titles to copy. Each title is inspected separately and uses the active language profile."
+msgstr "Selectează titlurile de copiat. Fiecare titlu este analizat separat folosind profilul lingvistic activ."
+
+msgid "Prepare Batch"
+msgstr "Pregătește lotul"
+
+msgid "Inspect the selected titles and prepare the batch."
+msgstr "Analizează titlurile selectate și pregătește lotul."
+
+msgid "Language profile required"
+msgstr "Este necesar un profil lingvistic"
+
+msgid "Choose or create a profile with audio or subtitle languages before preparing a DVD batch."
+msgstr "Alege sau creează un profil cu limbi audio sau pentru subtitrări înainte de a pregăti un lot DVD."
+
+msgid "Preparing DVD batch..."
+msgstr "Se pregătește lotul DVD..."
+
+msgid "Copying DVD batch..."
+msgstr "Se copiază lotul DVD..."
+
+msgid "DVD batch prepared"
+msgstr "Lot DVD pregătit"
+
+msgid "DVD batch needs preparation again"
+msgstr "Lotul DVD trebuie pregătit din nou"
+
+msgid "Copying DVD title {title} ({current}/{total})..."
+msgstr "Se copiază titlul DVD {title} ({current}/{total})..."
+
+msgid "DVD batch: titles are copied sequentially. Space estimates are per title, not for the whole batch; free space and output paths are checked again for each copy."
+msgstr "Lot DVD: titlurile sunt copiate secvențial. Spațiul este estimat pentru fiecare titlu, nu pentru întregul lot; spațiul liber și căile de destinație sunt verificate din nou pentru fiecare copiere."
+
+msgid "Titles skipped during preparation: {titles}"
+msgstr "Titluri omise la pregătire: {titles}"
+
+msgid "Titles skipped during copy preflight (kept in batch): {titles}"
+msgstr "Titluri omise la verificarea preliminară a copierii (păstrate în lot): {titles}"
+
+msgid "Warning: no audio track matched the profile for DVD title {title}; the output will have no audio."
+msgstr "Atenție: nicio pistă audio a titlului DVD {title} nu corespunde profilului; fișierul rezultat nu va avea sunet."
+
+msgid "Warning: no audio track was selected for DVD title {title}; the output will have no audio."
+msgstr "Atenție: nu a fost selectată nicio pistă audio pentru titlul DVD {title}; fișierul rezultat nu va avea sunet."
+
+msgid "Warning: no audio track was selected for playlist {playlist}; the output will have no audio."
+msgstr "Atenție: nu a fost selectată nicio pistă audio pentru lista {playlist}; fișierul rezultat nu va avea sunet."
+
+msgid "Warning: audio selection could not be determined; check whether the output includes audio."
+msgstr "Atenție: selecția audio nu a putut fi determinată; verificați dacă fișierul rezultat conține audio."
+
 msgid "GUI _language"
 msgstr "_Limba interfeței"
 

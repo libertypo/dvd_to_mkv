@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from dvdvideo.gui_commands import (
@@ -39,15 +39,19 @@ from dvdvideo.gui_listing import (
     parse_playlists,
 )
 from dvdvideo.gui_operations import (
+    DvdBatchJob,
     OperationHooks,
     OperationRequest,
     OperationResult,
     OutputSpec,
     VerificationSpec,
     WorkerLifecycle,
+    execute_dvd_batch,
     execute_operation,
+    prepare_dvd_batch,
+    review_dvd_batch,
 )
-from dvdvideo.gui_preferences import SourcePreferences
+from dvdvideo.gui_preferences import Profile, SourcePreferences
 from dvdvideo.gui_selection import SelectionCoordinator
 from dvdvideo.gui_support import ManagedProcess
 from dvdvideo.gui_translation import identity
@@ -68,6 +72,7 @@ class OperationInputs:
     selected: tuple[str, ...]
     dvd_title: str = "1"
     language: str = "en"
+    profile: Profile | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +101,7 @@ class OperationUiHooks:
     set_output_path: Callable[[str], None]
     notify_completion: Callable[[str, str], None]
     translate: Callable[[str], str] = identity
+    set_dvd_batch_count: Callable[[int], None] = lambda _count: None
 
 
 @dataclass(frozen=True)
@@ -119,6 +125,24 @@ class OperationControllerHooks:
     runtime: OperationRuntimeHooks
 
 
+@dataclass(frozen=True)
+class PreparedDvdBatch:
+    inputs: OperationInputs
+    jobs: tuple[DvdBatchJob, ...]
+    failures: tuple[str, ...]
+
+
+def dvd_batch_inputs_match(left: OperationInputs, right: OperationInputs) -> bool:
+    return (
+        left.script_path == right.script_path
+        and left.source == right.source
+        and left.is_bluray == right.is_bluray
+        and left.generation == right.generation
+        and left.output_path == right.output_path
+        and left.profile == right.profile
+    )
+
+
 class OperationController:
     def __init__(
         self,
@@ -130,6 +154,16 @@ class OperationController:
         self.selection = selection
         self.hooks = hooks
         self.pending_copy: object | None = None
+        self.dvd_batch: PreparedDvdBatch | None = None
+
+    def preserve_batch_on_title_change(self, previous: OperationInputs) -> None:
+        batch = self.dvd_batch
+        current = self.hooks.get_inputs()
+        if batch is None or not dvd_batch_inputs_match(batch.inputs, previous):
+            return
+        updated = replace(batch.inputs, generation=current.generation)
+        if dvd_batch_inputs_match(updated, current):
+            self.dvd_batch = replace(batch, inputs=updated)
 
     def selected_for_copy(self, inputs: OperationInputs | None = None) -> list[str]:
         inputs = inputs or self.hooks.get_inputs()
@@ -218,7 +252,7 @@ class OperationController:
             tuple(formats.items()),
         )
 
-    def discover_dvd_titles(self) -> None:
+    def discover_dvd_titles(self, on_listing: Callable[[Listing], None] | None = None) -> None:
         inputs = self.hooks.get_inputs()
         if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
             self.hooks.runtime.log("Wait for the current operation before discovering DVD titles.")
@@ -234,10 +268,179 @@ class OperationController:
         if os.path.basename(os.path.normpath(source)).upper() == "VIDEO_TS":
             source = os.path.dirname(os.path.normpath(source))
         self.start(
-            [tool, "-Oj", "-acs", source], on_listing=self.hooks.listing.load_dvd_titles,
+            [tool, "-Oj", "-acs", source], on_listing=on_listing or self.hooks.listing.load_dvd_titles,
             listing_parser=lambda output: parse_dvd_titles(output, translate=self.hooks.ui.translate),
             timeout=60, quiet_stdout=True,
         )
+
+    def prepare_dvd_batch(self, titles: tuple[str, ...]) -> None:
+        inputs = self.hooks.get_inputs()
+        if self.lifecycle.running or self.lifecycle.closing or inputs.detecting:
+            self.hooks.runtime.log("Wait for the current operation before preparing a DVD batch.")
+        elif inputs.is_bluray or not inputs.source:
+            self.hooks.runtime.log("Choose a DVD source before preparing a DVD batch.")
+        elif self.selection.requires_reinspection:
+            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+        elif not titles:
+            self.hooks.runtime.log("Select at least one DVD title.")
+        elif inputs.profile is None:
+            self.hooks.runtime.log("A language profile is required for a DVD batch.")
+        else:
+            self._start_dvd_batch(inputs, titles)
+
+    def clear_dvd_batch(self) -> None:
+        if self.lifecycle.running or self.lifecycle.closing:
+            self.hooks.runtime.log("Wait for the current operation before clearing the DVD batch.")
+            return
+        self.dvd_batch = None
+        self.pending_copy = None
+        self.hooks.ui.set_dvd_batch_count(0)
+        self.hooks.ui.set_status("Ready")
+        self.hooks.runtime.log("Prepared DVD batch cleared.")
+
+    def _start_dvd_batch(
+        self, inputs: OperationInputs, titles: tuple[str, ...],
+        jobs: tuple[DvdBatchJob, ...] | None = None, failures: tuple[str, ...] = (),
+        *, review: bool = False,
+    ) -> None:
+        current = self.hooks.get_inputs()
+        if (
+            self.lifecycle.running or self.lifecycle.closing or current.detecting
+            or not dvd_batch_inputs_match(current, inputs)
+        ):
+            self.hooks.runtime.log("DVD batch not started because the source or settings changed.")
+            return
+        operation = self.lifecycle.begin()
+        self.hooks.runtime.cancel_drive_scan()
+        self.hooks.ui.invalidate_choosers()
+        self.hooks.ui.set_busy(True)
+        self.hooks.ui.set_status(
+            "Preparing DVD batch..." if jobs is None else
+            "Preparing copy summary..." if review else "Copying DVD batch..."
+        )
+        request = OperationRequest(
+            command=(), script_path=inputs.script_path, source=inputs.source, is_bluray=False,
+            collect=False, output=OutputSpec(inputs.output_path, False, "", (), ()),
+            restored_source_settings=(
+                self.selection.restored_source is not None
+                and self.selection.restored_source.source == inputs.source
+                and (self.selection.restored_source.has_saved_settings
+                     or "selection" in self.selection.restored_source.edited)
+            ),
+            known_device_source=self.hooks.runtime.is_known_device_source(inputs.source),
+            language=inputs.language,
+        )
+
+        def dispatch(action: Callable[[], object]) -> None:
+            self.hooks.runtime.dispatch_ui(action)
+
+        hooks = OperationHooks(
+            log=self.hooks.runtime.log, queue_log=self.hooks.runtime.queue_log,
+            exclude_device=lambda path: dispatch(lambda: (
+                self.hooks.runtime.exclude_device_source(path)
+                if self.hooks.get_inputs().generation == inputs.generation else None
+            )),
+            confirm_non_device=lambda path: dispatch(lambda: (
+                self.hooks.runtime.confirm_non_device(path)
+                if self.hooks.get_inputs().generation == inputs.generation else None
+            )),
+            preview_started=lambda: None,
+            copy_started=lambda: None,
+            output_changed=lambda _path: None, translate=self.hooks.ui.translate,
+            batch_title_started=lambda title, current, total: dispatch(
+                lambda: self.show_dvd_batch_status(operation, title, current, total)
+            ),
+        )
+
+        def prepared(result: OperationResult) -> None:
+            if not dvd_batch_inputs_match(self.hooks.get_inputs(), inputs):
+                self.hooks.runtime.log("DVD batch not started because the source or settings changed.")
+                return
+            self.dvd_batch = PreparedDvdBatch(inputs, result.batch_jobs, result.batch_failures)
+            self.hooks.ui.set_dvd_batch_count(len(result.batch_jobs))
+            self.hooks.ui.set_status("DVD batch prepared")
+            self.hooks.runtime.log(
+                f"DVD batch prepared with {len(result.batch_jobs)} title(s). "
+                "Use Copy Selected to review the summary."
+            )
+
+        def present(result: OperationResult) -> None:
+            batch = self.dvd_batch
+            if (
+                batch is None or not dvd_batch_inputs_match(batch.inputs, inputs)
+                or not dvd_batch_inputs_match(self.hooks.get_inputs(), inputs)
+            ):
+                self.hooks.runtime.log("DVD batch not started because the source or settings changed.")
+                return
+            token = object()
+            self.pending_copy = token
+
+            def response(accepted: bool) -> None:
+                if self.pending_copy is not token:
+                    self.hooks.runtime.log("Ignored an outdated copy confirmation.")
+                    return
+                self.pending_copy = None
+                if not accepted:
+                    self.hooks.ui.set_status("DVD batch prepared")
+                    self.hooks.runtime.log("Copy cancelled before extraction; the DVD batch was kept.")
+                elif self.selection.requires_reinspection:
+                    self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+                elif self.dvd_batch is not batch:
+                    self.hooks.runtime.log("DVD batch changed; review its summary again.")
+                else:
+                    self._start_dvd_batch(inputs, titles, result.batch_jobs, result.batch_failures)
+
+            self.hooks.ui.set_status("Awaiting copy confirmation")
+            self.hooks.dialogs.present_copy_summary(result.output, response)
+
+        def worker() -> None:
+            result = OperationResult("Failed")
+            try:
+                if jobs is None:
+                    assert inputs.profile is not None
+                    result = prepare_dvd_batch(request, titles, inputs.profile, operation, hooks)
+                elif review:
+                    result = review_dvd_batch(request, jobs, failures, operation, hooks)
+                else:
+                    result = execute_dvd_batch(request, jobs, failures, operation, hooks)
+            except Exception:  # noqa: BLE001 - report unexpected failures at the worker boundary
+                import traceback
+                self.hooks.runtime.log("Unexpected DVD batch error:\n" + traceback.format_exc().rstrip())
+            finally:
+                def finished() -> None:
+                    if jobs is not None and not review and self.dvd_batch is not None:
+                        remaining = tuple(
+                            job for job in self.dvd_batch.jobs if job.title not in result.batch_completed
+                        )
+                        if remaining:
+                            self.dvd_batch = PreparedDvdBatch(inputs, remaining, self.dvd_batch.failures)
+                        else:
+                            self.dvd_batch = None
+                        self.hooks.ui.set_dvd_batch_count(len(remaining))
+                    callback = prepared if jobs is None else present
+                    self.finish_run(
+                        (lambda _text: callback(result)) if result.deliver_success else None,
+                        result.output, inputs.generation, inputs.source, False, result.status,
+                        completed_copy=jobs is not None and not review,
+                        notification_kind="Copy" if jobs is not None and not review else None,
+                    )
+
+                dispatch(finished)
+
+        if not self.hooks.runtime.start_worker(worker):
+            self.finish_run(status="Failed", notification_kind="Copy" if jobs is not None and not review else None)
+
+    def show_dvd_batch_status(
+        self, operation: ManagedProcess, title: str, current: int, total: int,
+    ) -> None:
+        if (
+            self.lifecycle.operation is operation
+            and not self.lifecycle.closing
+            and not operation.cancelled.is_set()
+        ):
+            self.hooks.ui.set_status(self.hooks.ui.translate(
+                "Copying DVD title {title} ({current}/{total})..."
+            ).format(title=title, current=current, total=total))
 
     def inspect(self) -> None:
         inputs = self.hooks.get_inputs()
@@ -321,6 +524,18 @@ class OperationController:
         if not inputs.source:
             self.hooks.runtime.log("Choose a source first.")
             return
+        if self.dvd_batch is not None:
+            batch = self.dvd_batch
+            if not dvd_batch_inputs_match(inputs, batch.inputs):
+                self.hooks.runtime.log(
+                    "The prepared DVD batch no longer matches the source or settings. "
+                    "Prepare it again or clear the batch before copying."
+                )
+                return
+            self._start_dvd_batch(
+                inputs, tuple(job.title for job in batch.jobs), batch.jobs, batch.failures, review=True,
+            )
+            return
         if inputs.is_bluray:
             selected = self.selected_for_copy(inputs)
             for playlist in selected:
@@ -357,7 +572,7 @@ class OperationController:
                 self.hooks.runtime.log(str(error))
                 return
             generation = inputs.generation
-            tracks = self.copy_tracks_summary(inputs)
+            tracks, warnings = self.copy_tracks_summary(inputs)
             token = object()
             self.pending_copy = token
 
@@ -376,7 +591,7 @@ class OperationController:
                     or current.is_bluray != inputs.is_bluray or self.selection.requires_reinspection
                     or current.output_format != inputs.output_format
                     or self.command() != command or self.output_snapshot() != output
-                    or self.copy_tracks_summary(current) != tracks
+                    or self.copy_tracks_summary(current) != (tracks, warnings)
                 ):
                     self.hooks.runtime.log("Copy not started because the source, settings, or operation changed. Review the summary again.")
                     return
@@ -384,6 +599,8 @@ class OperationController:
 
             def present(summary: str) -> None:
                 self.hooks.ui.set_status("Awaiting copy confirmation")
+                for warning in warnings:
+                    self.hooks.runtime.log(warning)
                 self.hooks.dialogs.present_copy_summary(summary + "\n\n" + tracks, response)
 
             self.start(
@@ -391,9 +608,10 @@ class OperationController:
                 output_argument_index=plan.output_index,
             )
 
-    def copy_tracks_summary(self, inputs: OperationInputs) -> str:
+    def copy_tracks_summary(self, inputs: OperationInputs) -> tuple[str, tuple[str, ...]]:
         translate = self.hooks.ui.translate
         lines = [translate("Selected tracks")]
+        warnings: list[str] = []
         playlists = self.selected_for_copy(inputs) if inputs.is_bluray else [""]
         for playlist in playlists:
             if inputs.is_bluray:
@@ -409,17 +627,37 @@ class OperationController:
             else:
                 identifiers = self.selected_for_copy(inputs)
                 tracks = self.selection.dvd_track_info
+            by_id = {track.identifier: track for track in tracks}
             if identifiers is None:
                 lines.append("  " + translate("All source tracks (not individually inspected)."))
+            else:
+                for identifier in identifiers:
+                    track = by_id.get(identifier)
+                    detail = (
+                        f" - {track.kind}, {track.language or translate('language unspecified')}" if track else ""
+                    )
+                    lines.append(f"  {identifier}{detail}")
+            selected_ids = set(identifiers) if identifiers is not None else set()
+            selected_tracks = [track for track in tracks if identifiers is None or track.identifier in selected_ids]
+            if any(track.kind == "audio" for track in selected_tracks):
                 continue
-            by_id = {track.identifier: track for track in tracks}
-            for identifier in identifiers:
-                track = by_id.get(identifier)
-                detail = (
-                    f" - {track.kind}, {track.language or translate('language unspecified')}" if track else ""
+            if identifiers is None or any(identifier not in by_id for identifier in identifiers):
+                warning = translate(
+                    "Warning: audio selection could not be determined; check whether the output includes audio."
                 )
-                lines.append(f"  {identifier}{detail}")
-        return "\n".join(lines)
+                if inputs.is_bluray:
+                    warning = translate("Playlist {playlist}:").format(playlist=playlist) + " " + warning
+            elif inputs.is_bluray:
+                warning = translate(
+                    "Warning: no audio track was selected for playlist {playlist}; the output will have no audio."
+                ).format(playlist=playlist)
+            else:
+                warning = translate(
+                    "Warning: no audio track was selected for DVD title {title}; the output will have no audio."
+                ).format(title=inputs.dvd_title)
+            lines.append(warning)
+            warnings.append(warning)
+        return "\n".join(lines), tuple(warnings)
 
     def confirm_m2ts_response(self, playlist: str, generation: int, accepted: bool) -> None:
         inputs = self.hooks.get_inputs()

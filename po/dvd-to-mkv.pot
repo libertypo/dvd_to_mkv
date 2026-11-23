@@ -12,6 +12,75 @@ msgstr ""
 msgid "Restart to apply the language. Some messages remain in English."
 msgstr ""
 
+msgid "Batch Titles"
+msgstr ""
+
+msgid "Clear Batch"
+msgstr ""
+
+msgid "Discover and select DVD titles to copy sequentially using the active language profile."
+msgstr ""
+
+msgid "Discard the prepared DVD batch."
+msgstr ""
+
+msgid "DVD batch prepared: {count} title(s)"
+msgstr ""
+
+msgid "Select DVD Titles"
+msgstr ""
+
+msgid "Select titles to copy. Each title is inspected separately and uses the active language profile."
+msgstr ""
+
+msgid "Prepare Batch"
+msgstr ""
+
+msgid "Inspect the selected titles and prepare the batch."
+msgstr ""
+
+msgid "Language profile required"
+msgstr ""
+
+msgid "Choose or create a profile with audio or subtitle languages before preparing a DVD batch."
+msgstr ""
+
+msgid "Preparing DVD batch..."
+msgstr ""
+
+msgid "Copying DVD batch..."
+msgstr ""
+
+msgid "DVD batch prepared"
+msgstr ""
+
+msgid "DVD batch needs preparation again"
+msgstr ""
+
+msgid "Copying DVD title {title} ({current}/{total})..."
+msgstr ""
+
+msgid "DVD batch: titles are copied sequentially. Space estimates are per title, not for the whole batch; free space and output paths are checked again for each copy."
+msgstr ""
+
+msgid "Titles skipped during preparation: {titles}"
+msgstr ""
+
+msgid "Titles skipped during copy preflight (kept in batch): {titles}"
+msgstr ""
+
+msgid "Warning: no audio track matched the profile for DVD title {title}; the output will have no audio."
+msgstr ""
+
+msgid "Warning: no audio track was selected for DVD title {title}; the output will have no audio."
+msgstr ""
+
+msgid "Warning: no audio track was selected for playlist {playlist}; the output will have no audio."
+msgstr ""
+
+msgid "Warning: audio selection could not be determined; check whether the output includes audio."
+msgstr ""
+
 msgid "GUI _language"
 msgstr ""
 

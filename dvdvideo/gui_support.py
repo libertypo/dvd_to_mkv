@@ -143,6 +143,8 @@ class ManagedProcess:
         *, input_data: bytes | None = None, stderr_log: Callable[[str], None] | None = None,
         abandon_unresponsive: bool = False, pass_fds: tuple[int, ...] = (),
         termination_log: Callable[[str], None] | None = None,
+        preserve_success_on_cancel: bool = False,
+        cancelled_exit_code: int | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self.check_cancelled()
         if abandon_unresponsive:
@@ -259,7 +261,12 @@ class ManagedProcess:
                 returncode = self.process.wait()
             if timed_out and timeout is not None:
                 raise subprocess.TimeoutExpired(command, timeout)
-            self.check_cancelled()
+            # Only copy commands opt in: their successful exit confirms publication.
+            if not (
+                preserve_success_on_cancel and returncode == 0
+                or cancelled_exit_code == returncode and self.cancelled.is_set()
+            ):
+                self.check_cancelled()
             if pipes_abandoned:
                 raise RuntimeError("Subprocess output pipes remained open after termination; output is incomplete.")
             if input_incomplete and returncode == 0:

@@ -45,6 +45,8 @@ class OperationCallbacks(Protocol):
     def preview_selected(self, *args: object) -> None: ...
     def inspect_streams(self, *args: object) -> None: ...
     def discover_dvd_titles(self, *args: object) -> None: ...
+    def choose_dvd_batch(self, *args: object) -> None: ...
+    def clear_dvd_batch(self, *args: object) -> None: ...
     def on_dvd_title_changed(self, *args: object) -> None: ...
     def on_track_playlist_changed(self, *args: object) -> None: ...
     def cancel_operation(self, *args: object) -> None: ...
@@ -133,7 +135,21 @@ class WindowView:
         self.discover_titles_button.set_tooltip_text(TOOLTIPS["discover_titles"])
         self.discover_titles_button.connect("clicked", self.callbacks.discover_dvd_titles)
         self.dvd_title_row.append(self.discover_titles_button)
+        self.dvd_batch_button = Gtk.Button(label="Batch Titles")
+        self.dvd_batch_button.set_tooltip_text(
+            "Discover and select DVD titles to copy sequentially using the active language profile."
+        )
+        self.dvd_batch_button.connect("clicked", self.callbacks.choose_dvd_batch)
+        self.dvd_title_row.append(self.dvd_batch_button)
         root.append(self.dvd_title_row)
+        self.dvd_batch_row = Gtk.Box(spacing=8, visible=False)
+        self.dvd_batch_label = Gtk.Label(xalign=0, hexpand=True)
+        self.dvd_batch_row.append(self.dvd_batch_label)
+        self.clear_dvd_batch_button = Gtk.Button(label="Clear Batch")
+        self.clear_dvd_batch_button.set_tooltip_text("Discard the prepared DVD batch.")
+        self.clear_dvd_batch_button.connect("clicked", self.callbacks.clear_dvd_batch)
+        self.dvd_batch_row.append(self.clear_dvd_batch_button)
+        root.append(self.dvd_batch_row)
 
         output_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         output_box.append(Gtk.Label(label="Output", xalign=0, css_classes=["heading"]))

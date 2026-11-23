@@ -1,5 +1,18 @@
 # What's new
 
+## 2026-11-23
+
+- Prepare several DVD titles with a language profile, review their individual
+  tracks and filenames, then copy them one at a time. Cancelling confirmation
+  keeps the prepared batch.
+- Finished titles stay finished when a batch is cancelled. Unfinished titles
+  remain available for another attempt, and existing files aren't overwritten.
+- Refreshing a drive clears its old disc selections and invalidates its
+  prepared batch. Disc changes still need a manual refresh.
+- Fixed reinspection state when switching media types and made shutdown find
+  application windows even when another window has focus.
+- Added Italian and Romanian text for the DVD batch controls.
+
 ## 2026-11-21
 
 - Blu-ray inspection now shows your playlists and opens the tracks for the

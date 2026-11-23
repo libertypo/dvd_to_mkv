@@ -15,6 +15,75 @@ msgstr ""
 msgid "Restart to apply the language. Some messages remain in English."
 msgstr "Riavvia per applicare la lingua. Alcuni messaggi rimangono in inglese."
 
+msgid "Batch Titles"
+msgstr "Titoli multipli"
+
+msgid "Clear Batch"
+msgstr "Cancella selezione multipla"
+
+msgid "Discover and select DVD titles to copy sequentially using the active language profile."
+msgstr "Cerca e seleziona i titoli DVD da copiare in sequenza usando il profilo linguistico attivo."
+
+msgid "Discard the prepared DVD batch."
+msgstr "Elimina la selezione multipla DVD preparata."
+
+msgid "DVD batch prepared: {count} title(s)"
+msgstr "Selezione multipla DVD preparata: {count} titoli"
+
+msgid "Select DVD Titles"
+msgstr "Seleziona titoli DVD"
+
+msgid "Select titles to copy. Each title is inspected separately and uses the active language profile."
+msgstr "Seleziona i titoli da copiare. Ogni titolo viene analizzato separatamente usando il profilo linguistico attivo."
+
+msgid "Prepare Batch"
+msgstr "Prepara selezione multipla"
+
+msgid "Inspect the selected titles and prepare the batch."
+msgstr "Analizza i titoli selezionati e prepara la selezione multipla."
+
+msgid "Language profile required"
+msgstr "Profilo linguistico richiesto"
+
+msgid "Choose or create a profile with audio or subtitle languages before preparing a DVD batch."
+msgstr "Scegli o crea un profilo con lingue audio o sottotitoli prima di preparare una selezione multipla DVD."
+
+msgid "Preparing DVD batch..."
+msgstr "Preparazione selezione multipla DVD..."
+
+msgid "Copying DVD batch..."
+msgstr "Copia della selezione multipla DVD..."
+
+msgid "DVD batch prepared"
+msgstr "Selezione multipla DVD preparata"
+
+msgid "DVD batch needs preparation again"
+msgstr "La selezione multipla DVD deve essere preparata di nuovo"
+
+msgid "Copying DVD title {title} ({current}/{total})..."
+msgstr "Copia del titolo DVD {title} ({current}/{total})..."
+
+msgid "DVD batch: titles are copied sequentially. Space estimates are per title, not for the whole batch; free space and output paths are checked again for each copy."
+msgstr "Selezione multipla DVD: i titoli vengono copiati in sequenza. Le stime dello spazio sono per singolo titolo, non per l'intera selezione; lo spazio libero e i percorsi di destinazione vengono ricontrollati per ogni copia."
+
+msgid "Titles skipped during preparation: {titles}"
+msgstr "Titoli saltati durante la preparazione: {titles}"
+
+msgid "Titles skipped during copy preflight (kept in batch): {titles}"
+msgstr "Titoli saltati durante i controlli preliminari della copia (mantenuti nella selezione): {titles}"
+
+msgid "Warning: no audio track matched the profile for DVD title {title}; the output will have no audio."
+msgstr "Attenzione: nessuna traccia audio del titolo DVD {title} corrisponde al profilo; il file risultante non avrà audio."
+
+msgid "Warning: no audio track was selected for DVD title {title}; the output will have no audio."
+msgstr "Attenzione: nessuna traccia audio è stata selezionata per il titolo DVD {title}; il file risultante non avrà audio."
+
+msgid "Warning: no audio track was selected for playlist {playlist}; the output will have no audio."
+msgstr "Attenzione: nessuna traccia audio è stata selezionata per la playlist {playlist}; il file risultante non avrà audio."
+
+msgid "Warning: audio selection could not be determined; check whether the output includes audio."
+msgstr "Attenzione: non è stato possibile determinare la selezione audio; verificare se il file risultante include audio."
+
 msgid "GUI _language"
 msgstr "_Lingua interfaccia"
 

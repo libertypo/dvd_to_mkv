@@ -79,12 +79,15 @@ class SourceController:
         self.cancel_detection()
         self.hooks.ui.prepare_source(source)
         if source:
-            self.workflow.detecting = True
-            self.hooks.ui.update_title_sensitivity()
-            self.hooks.ui.set_status("Detecting media type...")
-            self.workflow.schedule_detection(source, self.hooks.runtime.schedule_detection)
+            self._schedule_detection(source)
         else:
             self.hooks.ui.set_status("Choose a source")
+
+    def _schedule_detection(self, source: str) -> None:
+        self.workflow.detecting = True
+        self.hooks.ui.update_title_sensitivity()
+        self.hooks.ui.set_status("Detecting media type...")
+        self.workflow.schedule_detection(source, self.hooks.runtime.schedule_detection)
 
     def cancel_detection(self) -> None:
         self.workflow.cancel_detection(self.hooks.runtime.remove_timeout)
@@ -186,6 +189,9 @@ class SourceController:
         source = self.hooks.ui.get_source()
         if source and self.hooks.drives.should_clear_device_selections(source):
             self.hooks.drives.clear_device_selections()
+        if source and self.workflow.detecting:
+            self.cancel_detection()
+            self._schedule_detection(source)
         operation = self.workflow.begin_drive_scan()
         self.hooks.drives.render_drives([], True, None)
 
