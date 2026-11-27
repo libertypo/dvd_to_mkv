@@ -41,6 +41,8 @@ match the disc. After opening the tray or changing discs, use **Drives >
 Refresh drives**, select the drive again or choose the media type manually,
 then inspect the disc again and review your selections before previewing or
 copying. Do not change discs while an operation is in progress.
+The manual approach was preferred because an optical drive was not available
+to properly test automatic change detection.
 
 ## Pick your tracks once
 
