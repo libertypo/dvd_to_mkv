@@ -35,6 +35,15 @@ Keep the included `dvdvideo/` folder beside the scripts, then run:
 The Activity pane tells you what's happening and shows any errors.
 Existing output files won't be overwritten.
 
+**Optical drives:** The app does not automatically detect when the tray is
+opened or the disc is changed, so the displayed selections may no longer
+match the disc. After opening the tray or changing discs, use **Drives >
+Refresh drives**, select the drive again or choose the media type manually,
+then inspect the disc again and review your selections before previewing or
+copying. Do not change discs while an operation is in progress.
+The manual approach was preferred because an optical drive was not available
+to properly test automatic change detection.
+
 ## Pick your tracks once
 
 Save a profile with your favourite audio and subtitle languages, Blu-ray
