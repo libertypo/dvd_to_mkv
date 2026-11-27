@@ -99,8 +99,8 @@ playlists made from several clips.
 
 - The suggested main movie is a hint, not a promise. The longest playlist
   can sometimes be a menu.
-- Protected Blu-rays may need a local AACS key database. If you have lawfully
-  obtained one, you can place it at `~/.config/aacs/KEYDB.cfg` (or
+- Protected Blu-rays may need a local AACS key database. If you have **lawfully
+  obtained one**, you can place it at `~/.config/aacs/KEYDB.cfg` (or
   `~/.config/aacs/keydb.cfg`), or specify its path with `--keydb`. Keep it
   private: recommended folder permissions are `700` and file permissions
   are `600`. Lawful possession alone does not authorize decryption or copying;
