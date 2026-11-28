@@ -30,6 +30,30 @@ protection, and does not establish that any particular use is lawful. If you
 are unsure whether a use is permitted, obtain qualified legal advice before
 proceeding.
 
+## Independence and trademarks
+
+This project is independent. It is not affiliated with or endorsed by MakeMKV,
+FFmpeg, libbluray, AACS LA, the DVD Copy Control Association, the Blu-ray Disc
+Association, or any disc publisher. All product names and trademarks belong to
+their owners and are used only to describe compatibility.
+
+## No keys or circumvention material
+
+This repository does not include decryption keys, key databases, or copyrighted
+media. Any key database you use is supplied by you, and you are responsible for
+having the right to use it.
+
+## Third-party software
+
+External tools such as FFmpeg, FFprobe, libbluray utilities, `jq` and `7z` are
+not bundled. They are installed separately and remain under their own licenses.
+See [THIRD-PARTY.md](./THIRD-PARTY.md).
+
+## Privacy
+
+The application makes no network connections and sends no data anywhere. It
+stores preferences locally under `$XDG_CONFIG_HOME` (or `~/.config`).
+
 The software is provided **"AS IS", WITHOUT ANY WARRANTY**, including implied
 warranties of merchantability or fitness for a particular purpose, to the extent
 permitted by applicable law. Inspection results are advisory; correct title
@@ -44,6 +68,7 @@ rights granted by that license. It is not legal advice.
 ## Rights-holder concerns
 
 If you believe this repository contains material that infringes your rights,
-please contact the maintainer, identifying the material and the basis of your
-concern. Do not include confidential information or personal data in public
+please contact the maintainer, identifying the material, where it is located
+in this repository, and the basis of your concern. We aim to review notices
+promptly and will remove material that is shown to infringe. Do not include confidential information or personal data in public
 issues.
