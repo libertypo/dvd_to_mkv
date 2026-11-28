@@ -1,20 +1,5 @@
 # What's new
 
-## 2026-11-28
-
-- DVD title discovery offers advisory menu and possible commentary hints.
-- Blu-ray Inspect presents advisory playlist rankings and disc labels when
-  available. You choose the playlists; none are selected automatically.
-  Dummy, top-menu and repeated playlists are hidden by default, with an
-  option to show them.
-- DVD title discovery and Blu-ray Inspect exclude titles or playlists shorter
-  than five minutes.
-- Disc previews now use mpv instead of FFplay.
-- For an ambiguous single-playlist Blu-ray output path, you can choose
-  whether it is a file or directory.
-- A legal notice appears on first launch and is available from the GUI.
-- Bug fixing.
-
 ## 2026-11-23
 
 - Prepare several DVD titles with a language profile, review their individual
