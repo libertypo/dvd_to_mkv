@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# JSON schema violations are ValueError, matching the CLI's malformed-data handling.
+# JSON schema violations use ValueError, matching CLI malformed-data handling.
 # ruff: noqa: TRY004
 
 import argparse
@@ -27,10 +27,16 @@ from typing import cast
 
 
 def milliseconds(value: object) -> int:
-    if not isinstance(value, str) or re.fullmatch(r"[0-9]+:[0-5][0-9]:[0-5][0-9]\.[0-9]{3}", value) is None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[0-9]+:[0-5][0-9]:[0-5][0-9]\.[0-9]{3}", value)
+        is None
+    ):
         raise ValueError(f"Invalid chapter timestamp: {value!r}")
     hours, minutes, seconds, fraction = re.split(r"[:.]", value)
-    return ((int(hours) * 60 + int(minutes)) * 60 + int(seconds)) * 1000 + int(fraction)
+    return ((int(hours) * 60 + int(minutes)) * 60 + int(seconds)) * 1000 + int(
+        fraction
+    )
 
 
 def playlist_title(data: object, playlist: str) -> dict[object, object]:
@@ -41,10 +47,19 @@ def playlist_title(data: object, playlist: str) -> dict[object, object]:
         raise ValueError("Chapter metadata must contain a titles array.")
     titles = cast(list[object], title_values)
     if len(titles) != 1 or not isinstance(titles[0], dict):
-        raise ValueError("Chapter metadata must describe the requested playlist only.")
+        raise ValueError(
+            "Chapter metadata must describe the requested playlist only."
+        )
     title = cast(dict[object, object], titles[0])
-    if str(title.get("playlist")) != playlist:
-        raise ValueError("Chapter metadata must describe the requested playlist only.")
+    reported = str(title.get("playlist"))
+    if (
+        re.fullmatch(r"[0-9]{1,5}", playlist) is None
+        or re.fullmatch(r"[0-9]{1,5}", reported) is None
+        or int(reported) != int(playlist)
+    ):
+        raise ValueError(
+            "Chapter metadata must describe the requested playlist only."
+        )
     return title
 
 
@@ -61,25 +76,40 @@ def export_chapters(data: object, playlist: str) -> tuple[str, str, int]:
     for chapter in chapters:
         if not isinstance(chapter, dict):
             raise ValueError("Invalid chapter record.")
-        start = milliseconds(cast(dict[object, object], chapter).get("start time"))
+        start = milliseconds(
+            cast(dict[object, object], chapter).get("start time")
+        )
         if start >= duration or (starts and start <= starts[-1]):
-            raise ValueError("Chapter starts must increase and precede the playlist end.")
+            raise ValueError(
+                "Chapter starts must increase and precede the playlist end."
+            )
         starts.append(start)
     metadata = [";FFMETADATA1\n"]
     sidecar: list[str] = []
-    for index, (start, end) in enumerate(zip(starts, starts[1:] + [duration], strict=True), 1):
+    for index, (start, end) in enumerate(
+        zip(starts, starts[1:] + [duration], strict=True), 1
+    ):
         name = f"Chapter {index:03d}"
-        metadata.append(f"[CHAPTER]\nTIMEBASE=1/1000\nSTART={start}\nEND={end}\ntitle={name}\n")
+        metadata.append(
+            f"[CHAPTER]\nTIMEBASE=1/1000\nSTART={start}\nEND={end}\n"
+            f"title={name}\n"
+        )
         hours, remainder = divmod(start, 3600000)
         minutes, remainder = divmod(remainder, 60000)
         seconds, fraction = divmod(remainder, 1000)
         timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}.{fraction:03d}"
-        sidecar.append(f"CHAPTER{index:03d}={timestamp}\nCHAPTER{index:03d}NAME={name}\n")
+        sidecar.append(
+            f"CHAPTER{index:03d}={timestamp}\n"
+            f"CHAPTER{index:03d}NAME={name}\n"
+        )
     return "".join(metadata), "".join(sidecar), len(starts)
 
 
 def stream_pid(value: object) -> int:
-    if not isinstance(value, str) or re.fullmatch(r"0x[0-9a-fA-F]+", value) is None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"0x[0-9a-fA-F]+", value) is None
+    ):
         raise ValueError(f"Invalid stream PID: {value!r}")
     pid = int(value, 16)
     if pid > 0x1FFF:
@@ -102,7 +132,10 @@ def playlist_languages(data: object, playlist: str) -> dict[int, str]:
             language = record.get("language")
             if language is None or language == "":
                 continue
-            if not isinstance(language, str) or re.fullmatch(r"[a-zA-Z]{3}", language) is None:
+            if (
+                not isinstance(language, str)
+                or re.fullmatch(r"[a-zA-Z]{3}", language) is None
+            ):
                 raise ValueError(f"Invalid stream language: {language!r}")
             language = language.lower()
             if pid in languages and languages[pid] != language:
@@ -111,13 +144,17 @@ def playlist_languages(data: object, playlist: str) -> dict[int, str]:
     return languages
 
 
-def language_arguments(data: object, playlist: str, probe: object, selected: list[str]) -> list[str]:
+def language_arguments(
+    data: object, playlist: str, probe: object, selected: list[str]
+) -> list[str]:
     languages = playlist_languages(data, playlist)
     if not isinstance(probe, dict):
         raise ValueError("FFprobe metadata must contain a streams array.")
     streams = cast(dict[object, object], probe).get("streams")
     if not isinstance(streams, list) or not streams:
-        raise ValueError("FFprobe metadata must contain a nonempty streams array.")
+        raise ValueError(
+            "FFprobe metadata must contain a nonempty streams array."
+        )
     source: list[tuple[int, str]] = []
     for stream in cast(list[object], streams):
         if not isinstance(stream, dict):
@@ -128,27 +165,40 @@ def language_arguments(data: object, playlist: str, probe: object, selected: lis
         if not isinstance(kind, str):
             raise ValueError("Invalid FFprobe stream metadata.")
         source.append((pid, kind))
-    output_streams = source
+    output_streams: list[tuple[int, str]] = source
     if selected:
         output_streams = []
         for selection in selected:
             pid = stream_pid(selection)
-            matching = [(source_pid, kind) for source_pid, kind in source if source_pid == pid]
+            matching = [
+                (source_pid, kind)
+                for source_pid, kind in source
+                if source_pid == pid
+            ]
             if not matching:
-                raise ValueError(f"Selected PID {pid:#x} is missing from the copied stream.")
+                raise ValueError(
+                    f"Selected PID {pid:#x} is missing from the copied stream."
+                )
             output_streams.extend(matching)
     arguments: list[str] = []
     for index, (pid, kind) in enumerate(output_streams):
         if pid in languages:
-            arguments.extend((f"-metadata:s:{index}", f"language={languages[pid]}"))
+            arguments.extend(
+                (f"-metadata:s:{index}", f"language={languages[pid]}")
+            )
         elif kind in ("audio", "subtitle"):
-            print(f"Playlist {playlist}: no disc language for PID {pid:#x}; leaving its tag unchanged.",
-                  file=sys.stderr)
+            print(
+                f"Playlist {playlist}: no disc language for PID {pid:#x};"
+                " leaving its tag unchanged.",
+                file=sys.stderr,
+            )
     return arguments
 
 
 def language_args_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Build PID-matched FFmpeg language arguments.")
+    parser = argparse.ArgumentParser(
+        description="Build PID-matched FFmpeg language arguments."
+    )
     parser.add_argument("playlist")
     parser.add_argument("metadata", type=Path)
     parser.add_argument("output", type=Path)
@@ -156,8 +206,14 @@ def language_args_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         data = json.loads(args.metadata.read_text(encoding="utf-8"))
-        arguments = language_arguments(data, args.playlist, json.load(sys.stdin), args.pid)
-        args.output.write_bytes(b"".join(argument.encode("ascii") + b"\0" for argument in arguments))
+        arguments = language_arguments(
+            data, args.playlist, json.load(sys.stdin), args.pid
+        )
+        args.output.write_bytes(
+            b"".join(
+                argument.encode("ascii") + b"\0" for argument in arguments
+            )
+        )
     except (OSError, ValueError) as error:
         print(f"Blu-ray language import failed: {error}", file=sys.stderr)
         return 1
@@ -171,8 +227,16 @@ def main() -> int:
     parser.add_argument("playlist")
     parser.add_argument("metadata", type=Path)
     parser.add_argument("sidecar", type=Path)
-    parser.add_argument("--size-file", type=Path, help="Write the expected complete playlist size in bytes.")
-    parser.add_argument("--validate-languages", action="store_true", help="Validate MKV language metadata before copying.")
+    parser.add_argument(
+        "--size-file",
+        type=Path,
+        help="Write the expected complete playlist size in bytes.",
+    )
+    parser.add_argument(
+        "--validate-languages",
+        action="store_true",
+        help="Validate MKV language metadata before copying.",
+    )
     args = parser.parse_args()
     try:
         data = json.load(sys.stdin)
@@ -181,8 +245,15 @@ def main() -> int:
         metadata, sidecar, count = export_chapters(data, args.playlist)
         if args.size_file is not None:
             size = playlist_title(data, args.playlist).get("filesize")
-            if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
-                raise ValueError("Playlist metadata must contain a positive integer filesize for copy validation.")
+            if (
+                not isinstance(size, int)
+                or isinstance(size, bool)
+                or size <= 0
+            ):
+                raise ValueError(
+                    "Playlist metadata must contain a positive integer"
+                    " filesize for copy validation."
+                )
             args.size_file.write_text(str(size), encoding="ascii")
         args.metadata.write_text(metadata, encoding="utf-8")
         args.sidecar.write_text(sidecar, encoding="utf-8")

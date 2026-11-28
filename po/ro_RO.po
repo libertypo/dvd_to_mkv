@@ -13,6 +13,57 @@ msgstr ""
 "20)) ? 1 : 2;\n"
 "Generated-By: Babel 2.18.0\n"
 
+msgid "Choose output type"
+msgstr "Alegeți tipul destinației"
+
+msgid "The output path does not exist and does not end in .mkv or .m2ts:\n{path}\n\nUse it as a file named {resolved}, or choose Directory to create or select an existing directory before retrying."
+msgstr "Calea de destinație nu există și nu se termină în .mkv sau .m2ts:\n{path}\n\nFolosiți-o ca fișier cu numele {resolved} sau alegeți Director pentru a crea ori selecta un director existent înainte de a reîncerca."
+
+msgid "Directory"
+msgstr "Director"
+
+msgid "Choose an existing output directory"
+msgstr "Alegeți un director de destinație existent"
+
+msgid "Use as file"
+msgstr "Folosiți ca fișier"
+
+msgid "Use the displayed output filename"
+msgstr "Folosiți numele afișat al fișierului de destinație"
+
+msgid "Automatic (sample-based)"
+msgstr "Automat (pe baza unui eșantion)"
+
+msgid "Original M2TS (unfiltered output)"
+msgstr "M2TS original (ieșire nefiltrată)"
+
+msgid "Copy the playlist output without filtering; 3D preservation is not guaranteed."
+msgstr "Copiază ieșirea listei de redare fără filtrare; păstrarea 3D nu este garantată."
+
+msgid "Unfiltered playlist output (M2TS)."
+msgstr "Ieșirea nefiltrată a listei de redare (M2TS)."
+
+msgid "Playlist {playlist}: M2TS copies the playlist output without filtering"
+msgstr "Lista de redare {playlist}: M2TS copiază ieșirea listei de redare fără filtrare"
+
+msgid "Copy without filtering?"
+msgstr "Copiați fără filtrare?"
+
+msgid "Playlist {playlist}: copy unfiltered M2TS output?"
+msgstr "Lista de redare {playlist}: copiați ieșirea M2TS nefiltrată?"
+
+msgid "Your filtered selection cannot be applied to M2TS. The playlist output may omit the 3D dependent view."
+msgstr "Selecția filtrată nu poate fi aplicată la M2TS. Ieșirea listei de redare poate omite vederea 3D dependentă."
+
+msgid "Warning: MKV and M2TS copies may omit the 3D dependent view; 3D preservation is not verified."
+msgstr "Atenție: copiile MKV și M2TS pot omite vederea 3D dependentă; păstrarea 3D nu este verificată."
+
+msgid "Warning: The source is not pinned and may change or be replaced. Use a source protected from changes and keep the same disc inserted."
+msgstr "Atenție: sursa nu este fixată și poate fi modificată sau înlocuită. Folosește o sursă protejată împotriva modificărilor și păstrează același disc în unitate."
+
+msgid "M2TS contains the unfiltered playlist output; it may omit a 3D dependent view."
+msgstr "M2TS conține ieșirea nefiltrată a listei de redare; poate omite o vedere 3D dependentă."
+
 msgid "Restart to apply the language. Some messages remain in English."
 msgstr "Repornește pentru a aplica limba. Unele mesaje rămân în engleză."
 
@@ -172,6 +223,12 @@ msgstr "Selectează tot"
 msgid "Show unselected"
 msgstr "Arată elementele neselectate"
 
+msgid "Show dummy, top menu, and repeated playlists"
+msgstr "Arată listele fictive, meniul principal și listele repetate"
+
+msgid "Show disc-labelled dummy and top menu playlists, and playlists with repeated video. Labels and repetition do not prove a playlist is unusable."
+msgstr "Arată listele etichetate de disc ca fictive sau meniu principal și listele cu video repetat. Etichetele și repetițiile nu dovedesc că o listă este inutilizabilă."
+
 msgid "Hide unselected"
 msgstr "Ascunde elementele neselectate"
 
@@ -191,10 +248,10 @@ msgid "Preview"
 msgstr "Previzualizare"
 
 msgid ""
-"Play the selected DVD title or one selected Blu-ray playlist in FFplay (2D). "
+"Play the selected DVD title or one selected Blu-ray playlist in mpv (2D). "
 "Preview uses the player's tracks, not the copy selections."
 msgstr ""
-"Redă în FFplay (2D) titlul DVD selectat sau o listă de redare Blu-ray "
+"Redă în mpv (2D) titlul DVD selectat sau o listă de redare Blu-ray "
 "selectată. Previzualizarea folosește pistele playerului, nu selecțiile "
 "pentru copiere."
 
@@ -239,6 +296,9 @@ msgstr "Piste"
 msgid "Select one playlist and click Inspect Tracks"
 msgstr "Selectează un playlist și apasă Analizează pistele"
 
+msgid "Choose a playlist"
+msgstr "Alege o listă de redare"
+
 msgid "Choose a playlist to inspect its tracks"
 msgstr "Alege un playlist pentru a-i analiza pistele"
 
@@ -274,6 +334,21 @@ msgstr "Unități"
 
 msgid "Close"
 msgstr "Închide"
+
+msgid "Legalese Pleasantries"
+msgstr "Amabilități juridice"
+
+msgid "Legal notice"
+msgstr "Notificare juridică"
+
+msgid "Read the full legal notice."
+msgstr "Citește notificarea juridică integrală."
+
+msgid "Close the legal notice."
+msgstr "Închide notificarea juridică."
+
+msgid "Use this software only where copying and any necessary decryption are lawful. The software is provided without warranty."
+msgstr "Folosește acest software numai acolo unde copierea și orice decriptare necesară sunt legale. Software-ul este furnizat fără garanție."
 
 msgid "Verify Existing Copy"
 msgstr "Verifică o copie existentă"
@@ -628,11 +703,14 @@ msgid "Current phase progress and estimated time remaining, when available"
 msgstr "Progresul etapei curente și timpul rămas estimat, dacă este disponibil"
 
 msgid ""
-"List DVD titles using lsdvd. Duration and track counts are hints, not "
-"automatic selection."
+"List DVD titles using lsdvd. An extra same-language stereo audio track can "
+"suggest commentary but is unverified. Duration and track counts are hints, "
+"not automatic selection."
 msgstr ""
-"Listează titlurile DVD cu lsdvd. Durata și numărul pistelor sunt orientative "
-"și nu determină selectarea automată."
+"Listează titlurile DVD cu lsdvd. O pistă audio "
+"stereo suplimentară în aceeași limbă poate sugera comentariu, dar nu este "
+"verificată. Durata și numărul pistelor sunt orientative și nu determină "
+"selectarea automată."
 
 msgid "Drives (cancelling...)"
 msgstr "Unități (se anulează...)"
@@ -881,6 +959,45 @@ msgstr "cea mai mare durată afișată"
 
 msgid "40+ minutes"
 msgstr "cel puțin 40 de minute"
+
+#, python-brace-format
+msgid "Analysis group {group}"
+msgstr "Grup de analiză {group}"
+
+msgid "Not included in playlist analysis"
+msgstr "Neinclus în analiza listelor de redare"
+
+#, python-brace-format
+msgid "Disc label: {label} (unverified)"
+msgstr "Eticheta discului: {label} (neverificată)"
+
+msgid "Disc title candidate (unverified)"
+msgstr "Posibil titlu al discului (neverificat)"
+
+msgid "Possible main feature (unverified)"
+msgstr "Posibil film principal (neverificat)"
+
+msgid "Menu reference (unverified)"
+msgstr "Referință din meniu (neverificată)"
+
+msgid "Title set contains director-commentary audio metadata (unverified)"
+msgstr "Setul de titluri conține metadate audio pentru comentariul regizorului (neverificate)"
+
+#, python-brace-format
+msgid "Additional audio track: {language} ({channels} channels; possible commentary, unverified)"
+msgstr "Pistă audio suplimentară: {language} ({channels} canale; posibil comentariu, neverificat)"
+
+msgid "Director-commentary audio metadata (unverified)"
+msgstr "Metadate audio pentru comentariul regizorului (neverificate)"
+
+msgid "Startup reference (unverified)"
+msgstr "Referință de pornire (neverificată)"
+
+msgid "Navigation reference (unverified)"
+msgstr "Referință de navigare (neverificată)"
+
+msgid "No fixed navigation reference found"
+msgstr "Nu s-a găsit nicio referință fixă de navigare"
 
 #, python-brace-format
 msgid "Playlist {id}    {duration}    {chapters} chapters"

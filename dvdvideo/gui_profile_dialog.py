@@ -19,6 +19,8 @@ from collections.abc import Callable
 
 import gi
 
+# GTK's version must be selected before GTK-dependent imports.
+# ruff: noqa: E402
 gi.require_version("Gtk", "4.0")
 
 from gi.repository import Gtk  # type: ignore[reportMissingModuleSource]
@@ -47,16 +49,27 @@ class ProfileDialog(ResponseWindow):
         get_current_profile: Callable[[], str | None],
         translate: Callable[[str], str] = identity,
     ) -> None:
-        super().__init__(title=translate("Manage profiles"), transient_for=parent, modal=True)
+        super().__init__(
+            title=translate("Manage profiles"),
+            transient_for=parent,
+            modal=True,
+        )
         self.translate = translate
         self.preferences = preferences
         self.on_changed = on_changed
         self.get_current_profile = get_current_profile
         self.current_profile = current_profile or preferences.active_profile
         self.set_default_size(420, 300)
-        self.add_button(translate("Close"), Gtk.ResponseType.CLOSE, tooltip=translate(TOOLTIPS["close_profiles"]))
+        self.add_button(
+            translate("Close"),
+            Gtk.ResponseType.CLOSE,
+            tooltip=translate(TOOLTIPS["close_profiles"]),
+        )
         save_button = self.add_button(
-            translate("Save"), Gtk.ResponseType.APPLY, tooltip=translate(TOOLTIPS["save_profile"]), default=True,
+            translate("Save"),
+            Gtk.ResponseType.APPLY,
+            tooltip=translate(TOOLTIPS["save_profile"]),
+            default=True,
         )
         save_button.add_css_class("suggested-action")
         self.connect("response", self.on_dialog_response)
@@ -74,7 +87,9 @@ class ProfileDialog(ResponseWindow):
         self.profile_combo.set_active_id(self.current_profile)
         self.profile_combo.connect("changed", self.on_profile_selected)
         profile_row = Gtk.Box(spacing=8)
-        profile_label = Gtk.Label(label=translate("_Profile"), xalign=0, use_underline=True)
+        profile_label = Gtk.Label(
+            label=translate("_Profile"), xalign=0, use_underline=True
+        )
         profile_label.set_mnemonic_widget(self.profile_combo)
         profile_row.append(profile_label)
         self.profile_combo.set_hexpand(True)
@@ -84,13 +99,17 @@ class ProfileDialog(ResponseWindow):
         new_button.connect("clicked", self.on_new_profile)
         profile_row.append(new_button)
         self.delete_button = Gtk.Button(label=translate("Delete"))
-        self.delete_button.set_tooltip_text(translate(TOOLTIPS["delete_profile"]))
+        self.delete_button.set_tooltip_text(
+            translate(TOOLTIPS["delete_profile"])
+        )
         self.delete_button.add_css_class("destructive-action")
         self.delete_button.connect("clicked", self.on_delete_profile)
         profile_row.append(self.delete_button)
         content.append(profile_row)
         self.name_entry = Gtk.Entry()
-        self.audio_entry = Gtk.Entry(placeholder_text=translate("e.g. eng, jpn"))
+        self.audio_entry = Gtk.Entry(
+            placeholder_text=translate("e.g. eng, jpn")
+        )
         self.subtitle_entry = Gtk.Entry(placeholder_text=translate("e.g. eng"))
         for entry in (self.name_entry, self.audio_entry, self.subtitle_entry):
             entry.set_activates_default(True)
@@ -122,16 +141,21 @@ class ProfileDialog(ResponseWindow):
 
         self.on_profile_selected()
 
-    def on_dialog_response(self, _dialog: ResponseWindow, response: int) -> None:
+    def on_dialog_response(
+        self, _dialog: ResponseWindow, response: int
+    ) -> None:
         if response == Gtk.ResponseType.APPLY:
             self.on_save_profile()
         else:
             self.destroy()
 
     def on_profile_selected(self, *_args: object) -> None:
-        profile = self.preferences.get_profile(self.profile_combo.get_active_id())
+        profile = self.preferences.get_profile(
+            self.profile_combo.get_active_id()
+        )
         self.delete_button.set_sensitive(
-            self.profile_combo.get_active_id() not in (None, DEFAULT_PROFILE_NAME)
+            self.profile_combo.get_active_id()
+            not in (None, DEFAULT_PROFILE_NAME)
         )
         self.name_entry.set_text(profile.name)
         self.audio_entry.set_text(", ".join(profile.audio_languages))
@@ -146,7 +170,7 @@ class ProfileDialog(ResponseWindow):
         self.audio_entry.set_text("")
         self.subtitle_entry.set_text("")
         self.format_combo.set_active_id("auto")
-        self.minimum_spin.set_value(2)
+        self.minimum_spin.set_value(5)
         self.error_label.set_text("")
 
     def on_save_profile(self, *_args: object) -> None:
@@ -154,11 +178,20 @@ class ProfileDialog(ResponseWindow):
             name = self.name_entry.get_text().strip()
             selected = self.profile_combo.get_active_id()
             if name in self.preferences.profiles and name != selected:
-                raise ValueError(self.translate("A profile with that name already exists; select it to edit it."))
+                raise ValueError(
+                    self.translate(
+                        "A profile with that name already exists; select it to"
+                        " edit it."
+                    )
+                )
             profile = Profile(
                 name=name,
-                audio_languages=parse_language_codes(self.audio_entry.get_text()),
-                subtitle_languages=parse_language_codes(self.subtitle_entry.get_text()),
+                audio_languages=parse_language_codes(
+                    self.audio_entry.get_text()
+                ),
+                subtitle_languages=parse_language_codes(
+                    self.subtitle_entry.get_text()
+                ),
                 output_format=self.format_combo.get_active_id() or "auto",
                 minimum_minutes=self.minimum_spin.get_value_as_int(),
             )
@@ -167,32 +200,52 @@ class ProfileDialog(ResponseWindow):
             return
         warning = None
         try:
-            self.preferences.save_profile(profile, previous_name=selected, activate=True)
+            self.preferences.save_profile(
+                profile, previous_name=selected, activate=True
+            )
         except PreferencesDurabilityError as error:
             warning = str(error)
         except (OSError, ValueError) as error:
             self.error_label.set_text(str(error))
             return
         name = profile.name.strip()
-        replacement = (selected, name) if selected is not None and selected != name else None
-        self.current_profile, applied = self.on_changed(name, True, replacement)
+        replacement = (
+            (selected, name)
+            if selected is not None and selected != name
+            else None
+        )
+        self.current_profile, applied = self.on_changed(
+            name, True, replacement
+        )
         self.refresh_profiles(name)
         if not applied:
-            message = self.translate("Profile saved, but not applied; see Activity for details.")
-            self.error_label.set_text(f"{message}\n{warning}" if warning else message)
+            message = self.translate(
+                "Profile saved, but not applied; see Activity for details."
+            )
+            self.error_label.set_text(
+                f"{message}\n{warning}" if warning else message
+            )
             return
         self.error_label.set_text(
-            warning or (self.translate("Profile updated; save queued.") if self.preferences.writer
-                        else self.translate("Profile saved."))
+            warning
+            or (
+                self.translate("Profile updated; save queued.")
+                if self.preferences.writer
+                else self.translate("Profile saved.")
+            )
         )
 
     def on_delete_profile(self, *_args: object) -> None:
         name = self.profile_combo.get_active_id()
         if name is None or name == DEFAULT_PROFILE_NAME:
-            self.error_label.set_text(self.translate("The Default profile cannot be deleted."))
+            self.error_label.set_text(
+                self.translate("The Default profile cannot be deleted.")
+            )
             return
         warning = None
-        current_profile = self.get_current_profile() or self.preferences.active_profile
+        current_profile = (
+            self.get_current_profile() or self.preferences.active_profile
+        )
         was_active = name == current_profile
         try:
             self.preferences.delete_profile(name)
@@ -201,18 +254,29 @@ class ProfileDialog(ResponseWindow):
         except (OSError, ValueError) as error:
             self.error_label.set_text(str(error))
             return
-        self.current_profile = DEFAULT_PROFILE_NAME if was_active else current_profile
+        self.current_profile = (
+            DEFAULT_PROFILE_NAME if was_active else current_profile
+        )
         self.refresh_profiles(self.current_profile)
         self.current_profile, applied = self.on_changed(
             self.current_profile, was_active, (name, DEFAULT_PROFILE_NAME),
         )
         if not applied:
-            message = self.translate("Profile deleted, but the replacement was not applied; see Activity.")
-            self.error_label.set_text(f"{message}\n{warning}" if warning else message)
+            message = self.translate(
+                "Profile deleted, but the replacement was not applied; see"
+                " Activity."
+            )
+            self.error_label.set_text(
+                f"{message}\n{warning}" if warning else message
+            )
             return
         self.error_label.set_text(
-            warning or (self.translate("Profile deleted; save queued.") if self.preferences.writer
-                        else self.translate("Profile deleted."))
+            warning
+            or (
+                self.translate("Profile deleted; save queued.")
+                if self.preferences.writer
+                else self.translate("Profile deleted.")
+            )
         )
 
     def refresh_profiles(self, selected: str) -> None:

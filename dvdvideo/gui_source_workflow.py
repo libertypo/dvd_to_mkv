@@ -51,8 +51,11 @@ class SourceWorkflow:
     applying_detection: bool = False
     detection_worker: ManagedProcess | None = None
     pending_detection: tuple[str, int] | None = None
+    drive_scan_restart: bool = False
 
-    def cancel_detection(self, remove_timeout: Callable[[int], object]) -> None:
+    def cancel_detection(
+        self, remove_timeout: Callable[[int], object]
+    ) -> None:
         self.detection_generation += 1
         if self.detection_timeout is not None:
             remove_timeout(self.detection_timeout)
@@ -63,16 +66,36 @@ class SourceWorkflow:
             self.detection_probe.cancel()
             self.detection_probe = None
 
-    def schedule_detection(self, source: str, schedule: Callable[[str, int], int]) -> None:
+    def schedule_detection(
+        self, source: str, schedule: Callable[[str, int], int]
+    ) -> None:
         self.detection_timeout = schedule(source, self.detection_generation)
 
-    def is_current(self, source: str, generation: int, current_source: str, *, closing: bool) -> bool:
-        return not closing and generation == self.detection_generation and source == current_source
+    def is_current(
+        self,
+        source: str,
+        generation: int,
+        current_source: str,
+        *,
+        closing: bool,
+    ) -> bool:
+        return (
+            not closing
+            and generation == self.detection_generation
+            and source == current_source
+        )
 
     def begin_detection(
-        self, source: str, generation: int, current_source: str, *, closing: bool,
+        self,
+        source: str,
+        generation: int,
+        current_source: str,
+        *,
+        closing: bool,
     ) -> ManagedProcess | None:
-        if not self.is_current(source, generation, current_source, closing=closing):
+        if not self.is_current(
+            source, generation, current_source, closing=closing
+        ):
             return None
         self.detection_timeout = None
         if self.detection_worker is not None:
@@ -84,15 +107,24 @@ class SourceWorkflow:
         return self.detection_probe
 
     def finish_detection(
-        self, source: str, generation: int, current_source: str, *, closing: bool,
+        self,
+        source: str,
+        generation: int,
+        current_source: str,
+        *,
+        closing: bool,
     ) -> bool:
-        if not self.is_current(source, generation, current_source, closing=closing):
+        if not self.is_current(
+            source, generation, current_source, closing=closing
+        ):
             return False
         self.detecting = False
         self.detection_probe = None
         return True
 
-    def detection_finished(self, operation: ManagedProcess) -> tuple[str, int] | None:
+    def detection_finished(
+        self, operation: ManagedProcess
+    ) -> tuple[str, int] | None:
         if self.detection_worker is not operation:
             return None
         self.detection_worker = None
@@ -108,13 +140,17 @@ class SourceWorkflow:
         self.drive_scan_discarded = False
         return operation
 
-    def finish_drive_scan(self, operation: ManagedProcess, *, closing: bool) -> bool:
+    def finish_drive_scan(
+        self, operation: ManagedProcess, *, closing: bool
+    ) -> bool:
         if self.drive_scan is not operation:
             return False
         self.drive_scan = None
+        self.drive_scan_restart = False
         return not closing and not self.drive_scan_discarded
 
     def cancel_drive_scan(self, *, discard: bool = False) -> None:
+        self.drive_scan_restart = False
         if self.drive_scan is not None:
             self.drive_scan.cancel()
             if discard:
@@ -137,7 +173,9 @@ def detect_source(
                 deliver(source, generation, None, error, None)
                 return
         else:
-            device = os.path.exists(source) and stat.S_ISBLK(os.stat(source).st_mode)
+            device = os.path.exists(source) and stat.S_ISBLK(
+                os.stat(source).st_mode
+            )
             if device:
                 exclude_device(source)
             media = detect_media(source, probe)
@@ -149,25 +187,52 @@ def detect_source(
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         deliver(source, generation, None, str(error), None)
     except Exception as error:  # noqa: BLE001 - worker boundary reports unexpected errors to Activity
-        log("Unexpected media detection error:\n" + traceback.format_exc().rstrip())
-        deliver(source, generation, None, f"Unexpected error: {type(error).__name__}: {error}", None)
+        log(
+            "Unexpected media detection error:\n"
+            + traceback.format_exc().rstrip()
+        )
+        deliver(
+            source,
+            generation,
+            None,
+            f"Unexpected error: {type(error).__name__}: {error}",
+            None,
+        )
     else:
         deliver(source, generation, media, None, device)
 
 
-def _run_probe(
-    arguments: list[str], operation: ManagedProcess, log: Callable[[str], None], label: str,
-) -> dict[str, object]:
-    # Keep potentially blocking filesystem calls out of the GUI's worker process.
-    command = [
-        sys.executable, "-c",
-        ("import sys; sys.path.insert(0, sys.argv.pop(1)); "
-         "from dvdvideo.gui_source_workflow import main; raise SystemExit(main())"),
-        str(Path(__file__).parent.parent), *arguments,
+def _probe_command(arguments: list[str]) -> list[str]:
+    return [
+        sys.executable,
+        "-c",
+        (
+            "import sys; sys.path.insert(0, sys.argv.pop(1)); from"
+            " dvdvideo.gui_source_workflow import main; raise"
+            " SystemExit(main())"
+        ),
+        str(Path(__file__).parent.parent),
+        *arguments,
     ]
-    result = operation.run(command, timeout=35, abandon_unresponsive=True, stderr_log=log)
+
+
+def _run_probe(
+    arguments: list[str],
+    operation: ManagedProcess,
+    log: Callable[[str], None],
+    label: str,
+) -> dict[str, object]:
+    # Keep blocking filesystem calls out of the GUI's worker process.
+    result = operation.run(
+        _probe_command(arguments),
+        timeout=35,
+        abandon_unresponsive=True,
+        stderr_log=log,
+    )
     if result.returncode:
-        raise RuntimeError(f"{label} probe failed with exit status {result.returncode}")
+        raise RuntimeError(
+            f"{label} probe failed with exit status {result.returncode}"
+        )
     try:
         data: object = json.loads(result.stdout)
     except ValueError as error:
@@ -181,11 +246,18 @@ def probe_source(
     source: str, operation: ManagedProcess, log: Callable[[str], None],
 ) -> tuple[str | None, str | None, bool]:
     record = _run_probe(["--", source], operation, log, "Source")
-    media, error, device = record.get("media"), record.get("error"), record.get("device")
-    if (
-        not isinstance(device, bool)
-        or not ((isinstance(media, str) and media in ("dvd", "bluray") and error is None)
-                or (media is None and isinstance(error, str) and error))
+    media, error, device = (
+        record.get("media"),
+        record.get("error"),
+        record.get("device"),
+    )
+    if not isinstance(device, bool) or not (
+        (
+            isinstance(media, str)
+            and media in ("dvd", "bluray")
+            and error is None
+        )
+        or (media is None and isinstance(error, str) and error)
     ):
         raise RuntimeError("Source probe returned an invalid result")
     if isinstance(media, str):
@@ -195,41 +267,104 @@ def probe_source(
     raise RuntimeError("Source probe returned neither media nor an error")
 
 
+def _drive_record(item: object) -> OpticalDrive:
+    if not isinstance(item, dict):
+        raise RuntimeError("Drive probe returned an invalid drive")  # noqa: TRY004
+    drive = cast(dict[str, object], item)
+    path, name, media, status = (
+        drive.get(key) for key in ("path", "name", "media", "status")
+    )
+    if (
+        not isinstance(path, str) or not path or not isinstance(name, str)
+        or not isinstance(status, str) or "media" not in drive
+        or media not in (None, "dvd", "bluray")
+    ):
+        raise RuntimeError("Drive probe returned an invalid drive")
+    return OpticalDrive(path, name, cast(str | None, media), status)
+
+
 def probe_drives(
     operation: ManagedProcess, log: Callable[[str], None],
 ) -> tuple[list[OpticalDrive], str | None]:
-    record = _run_probe(["--scan-drives"], operation, log, "Drive")
-    items, error = record.get("drives"), record.get("error")
-    if not isinstance(items, list) or not (
-        error is None or isinstance(error, str) and error and not items
-    ):
-        raise RuntimeError("Drive probe returned an invalid result")
-    drives: list[OpticalDrive] = []
-    for item in cast(list[object], items):
-        if not isinstance(item, dict):
-            raise RuntimeError("Drive probe returned an invalid drive")  # noqa: TRY004
-        drive = cast(dict[str, object], item)
-        path, name, media, status = (drive.get(key) for key in ("path", "name", "media", "status"))
-        if (
-            not isinstance(path, str) or not path or not isinstance(name, str)
-            or not isinstance(status, str) or "media" not in drive
-            or media not in (None, "dvd", "bluray")
+    completed: list[OpticalDrive] = []
+    pending = ""
+
+    def receive(text: str) -> None:
+        nonlocal pending
+        pending += text
+        while "\n" in pending:
+            line, pending = pending.split("\n", 1)
+            try:
+                event: object = json.loads(line)
+            except ValueError as error:
+                raise RuntimeError(
+                    "Drive probe returned invalid JSON"
+                ) from error
+            if not isinstance(event, dict):
+                raise RuntimeError("Drive probe returned an invalid result")  # noqa: TRY004
+            event = cast(dict[str, object], event)
+            if event.get("event") == "drive":
+                completed.append(_drive_record(event.get("drive")))
+            elif event.get("event") != "progress" and "drives" not in event:
+                raise RuntimeError("Drive probe returned an invalid result")
+
+    try:
+        result = operation.run(
+            _probe_command(["--scan-drives"]),
+            timeout=35,
+            abandon_unresponsive=True,
+            log=receive,
+            stderr_log=log,
+            termination_log=log,
+            reset_timeout_on_stdout=True,
+        )
+        if result.returncode:
+            return (
+                completed,
+                f"Drive probe failed with exit status {result.returncode}",
+            )
+        try:
+            lines = result.stdout.splitlines()
+            record: object = json.loads(lines[-1]) if lines else None
+        except ValueError as error:
+            raise RuntimeError("Drive probe returned invalid JSON") from error
+        if not isinstance(record, dict):
+            raise RuntimeError("Drive probe returned an invalid result")  # noqa: TRY004
+        record = cast(dict[str, object], record)
+        items, error = record.get("drives"), record.get("error")
+        if not isinstance(items, list) or not (
+            error is None or isinstance(error, str) and error and not items
         ):
-            raise RuntimeError("Drive probe returned an invalid drive")
-        drives.append(OpticalDrive(path, name, cast(str | None, media), status))
-    return drives, error
+            raise RuntimeError("Drive probe returned an invalid result")
+        drives = [_drive_record(item) for item in cast(list[object], items)]
+        return (completed if error else drives), error
+    except OperationCancelled:
+        raise
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        return completed, f"Drive discovery failed: {error}"
+    except Exception:  # noqa: BLE001 - worker boundary reports the traceback to Activity
+        return (
+            completed,
+            "Unexpected drive discovery error:\n"
+            + traceback.format_exc().rstrip(),
+        )
 
 
 def scan_drives(
     operation: ManagedProcess, *, isolate: bool = False,
     log: Callable[[str], None] = logger.warning,
+    progress: Callable[[], None] = lambda: None,
+    found: Callable[[OpticalDrive], None] = lambda _drive: None,
 ) -> tuple[list[OpticalDrive], str | None]:
     try:
         operation.check_cancelled()
         if isolate:
             drives, error = probe_drives(operation, log)
         else:
-            drives, error = discover_drives(detect_media, operation), None
+            drives, error = (
+                discover_drives(detect_media, operation, progress, found),
+                None,
+            )
         operation.check_cancelled()
         return drives, error
     except OperationCancelled:
@@ -237,13 +372,19 @@ def scan_drives(
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         return [], f"Drive discovery failed: {error}"
     except Exception:  # noqa: BLE001 - worker boundary reports the traceback to Activity
-        return [], "Unexpected drive discovery error:\n" + traceback.format_exc().rstrip()
+        return (
+            [],
+            "Unexpected drive discovery error:\n"
+            + traceback.format_exc().rstrip(),
+        )
 
 
 def main() -> int:
     from dvdvideo import gui_support
 
-    parser = argparse.ArgumentParser(description="Isolated source and drive detection for the GUI")
+    parser = argparse.ArgumentParser(
+        description="Isolated source and drive detection for the GUI"
+    )
     parser.add_argument("source", nargs="?")
     parser.add_argument("--scan-drives", action="store_true")
     args = parser.parse_args()
@@ -258,14 +399,18 @@ def main() -> int:
         signum: signal.signal(signum, cancel)
         for signum in (signal.SIGINT, signal.SIGTERM)
     }
-    # Leave time for the helper's managed 7z process to stop before its supervisor kills it.
+    # Let the helper's managed 7z process stop before the supervisor kills it.
     previous_grace = gui_support.TERMINATION_GRACE
     gui_support.TERMINATION_GRACE = 1
     result: tuple[str | None, str | None] | None = None
     device = False
 
     def deliver(
-        _source: str, _generation: int, media: str | None, error: str | None, _device: bool | None,
+        _source: str,
+        _generation: int,
+        media: str | None,
+        error: str | None,
+        _device: bool | None,
     ) -> None:
         nonlocal result
         result = media, error
@@ -276,13 +421,35 @@ def main() -> int:
 
     try:
         if args.scan_drives:
-            drives, error = scan_drives(operation)
+            def progress() -> None:
+                print(json.dumps({"event": "progress"}), flush=True)
+
+            def found(drive: OpticalDrive) -> None:
+                print(
+                    json.dumps({"event": "drive", "drive": asdict(drive)}),
+                    flush=True,
+                )
+
+            drives, error = scan_drives(
+                operation, progress=progress, found=found
+            )
             if operation.cancelled.is_set():
                 return 130
-            print(json.dumps({"drives": [asdict(drive) for drive in drives], "error": error}))
+            print(
+                json.dumps(
+                    {
+                        "drives": [asdict(drive) for drive in drives],
+                        "error": error,
+                    }
+                )
+            )
             return 0
         detect_source(
-            args.source, 0, operation, deliver=deliver, exclude_device=exclude_device,
+            args.source,
+            0,
+            operation,
+            deliver=deliver,
+            exclude_device=exclude_device,
             log=lambda message: print(message, file=sys.stderr),
         )
         if result is None:

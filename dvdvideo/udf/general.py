@@ -35,19 +35,36 @@ class UnsupportedUdfError(NotImplementedError):
 class DescriptorTag:
     _struct = struct.Struct('<HHBxHHHI')
 
-    def __init__(self, buf: bytes | bytearray | memoryview, expected_location: int | None = None) -> None:
+    def __init__(
+        self,
+        buf: bytes | bytearray | memoryview,
+        expected_location: int | None = None,
+    ) -> None:
         if len(buf) < self._struct.size:
             raise MalformedUdfError('Truncated UDF descriptor tag')
         data = self._struct.unpack(buf[:16])
-        (self.identifier, self.version, self.checksum, _serial_number,
-                crc, self.crc_length, self.location) = data
-        if (sum(buf[:4]) + sum(buf[5:16])) & 0xff != self.checksum:
+        (
+            self.identifier,
+            self.version,
+            self.checksum,
+            _serial_number,
+            crc,
+            self.crc_length,
+            self.location,
+        ) = data
+        if (sum(buf[:4]) + sum(buf[5:16])) & 0xFF != self.checksum:
             raise MalformedUdfError('Invalid UDF descriptor tag checksum')
         if self.version not in (2, 3):
-            raise MalformedUdfError(f'Unsupported UDF descriptor version: {self.version}')
-        if expected_location is not None and self.location != expected_location:
             raise MalformedUdfError(
-                f'UDF descriptor tag location {self.location} does not match expected {expected_location}'
+                f'Unsupported UDF descriptor version: {self.version}'
+            )
+        if (
+            expected_location is not None
+            and self.location != expected_location
+        ):
+            raise MalformedUdfError(
+                f'UDF descriptor tag location {self.location} does not match'
+                f' expected {expected_location}'
             )
         if len(buf) < 16 + self.crc_length:
             raise MalformedUdfError('Truncated UDF descriptor CRC data')
@@ -56,7 +73,9 @@ class DescriptorTag:
 
     def require_crc_length(self, length: int) -> None:
         if self.crc_length < length:
-            raise MalformedUdfError('UDF descriptor CRC does not cover required fields')
+            raise MalformedUdfError(
+                'UDF descriptor CRC does not cover required fields'
+            )
 
     def __repr__(self) -> str:
         return (
@@ -68,7 +87,9 @@ class DescriptorTag:
 class OSTACompressedUnicode(str):
     def __new__(cls, buf: bytes) -> str:
         if not buf:
-            raise MalformedUdfError('Missing OSTA Unicode compression identifier')
+            raise MalformedUdfError(
+                'Missing OSTA Unicode compression identifier'
+            )
         stype = buf[0]
 
         if stype == 8:
@@ -79,8 +100,12 @@ class OSTACompressedUnicode(str):
             try:
                 return buf[1:].decode('utf-16be')
             except UnicodeDecodeError as error:
-                raise MalformedUdfError('Invalid OSTA 16-bit Unicode string') from error
-        raise MalformedUdfError(f'Unsupported OSTA Unicode compression identifier: {stype}')
+                raise MalformedUdfError(
+                    'Invalid OSTA 16-bit Unicode string'
+                ) from error
+        raise MalformedUdfError(
+            f'Unsupported OSTA Unicode compression identifier: {stype}'
+        )
 
 
 class ExtentAD:
@@ -94,7 +119,8 @@ class ExtentAD:
 
     def __repr__(self) -> str:
         return (
-            f'<ExtentAD with location: {self.location:d}; length: {self.length:d}>'
+            f'<ExtentAD with location: {self.location:d}; length:'
+            f' {self.length:d}>'
         )
 
 
@@ -104,7 +130,9 @@ class LongAD:
 
     def __init__(self, buf: bytes) -> None:
         if len(buf) != self.size:
-            raise MalformedUdfError('Invalid long allocation descriptor length')
+            raise MalformedUdfError(
+                'Invalid long allocation descriptor length'
+            )
         data = self._struct.unpack(buf)
         length, self.location, self.partition = data
         self.length = length & 0x3fffffff
@@ -112,8 +140,9 @@ class LongAD:
 
     def __repr__(self) -> str:
         return (
-            f'<LongAD with location: {self.location:d}; length: {self.length:d}; '
-            f'flags: {self.flags:d}; partition: {self.partition:d}>'
+            f'<LongAD with location: {self.location:d}; length:'
+            f' {self.length:d}; flags: {self.flags:d}; partition:'
+            f' {self.partition:d}>'
         )
 
 
@@ -123,11 +152,16 @@ class ShortAD:
 
     def __init__(self, buf: bytes) -> None:
         if len(buf) != self.size:
-            raise MalformedUdfError('Invalid short allocation descriptor length')
+            raise MalformedUdfError(
+                'Invalid short allocation descriptor length'
+            )
         data = self._struct.unpack(buf)
         length, self.location = data
         self.length = length & 0x3fffffff
         self.flags = length >> 30
 
     def __repr__(self) -> str:
-        return f'<ShortAD with location: {self.location:d}; length: {self.length:d}; flags: {self.flags:x}>'
+        return (
+            f'<ShortAD with location: {self.location:d}; length:'
+            f' {self.length:d}; flags: {self.flags:x}>'
+        )

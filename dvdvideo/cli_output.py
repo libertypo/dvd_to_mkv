@@ -1,10 +1,12 @@
 """Formatting helpers for the command-line DVD inspection reports."""
 
+# JSON schema violations use ValueError, as in Blu-ray inspection helpers.
+# ruff: noqa: TRY004
+
 import json
 import re
 import sys
 from typing import cast
-
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
 
@@ -28,7 +30,7 @@ def format_dvd_streams(output: str) -> str:
     streams = data.get("streams")
     if not isinstance(streams, list):
         raise ValueError("expected an FFprobe streams array")
-    lines = ["\t".join(("INDEX", "TYPE", "CODEC", "PROFILE", "CH", "LAYOUT", "LANG", "TITLE"))]
+    lines = ["INDEX\tTYPE\tCODEC\tPROFILE\tCH\tLAYOUT\tLANG\tTITLE"]
     seen_indexes: set[int] = set()
     for item in cast(list[object], streams):
         stream = _json_object(item, "stream")
@@ -43,17 +45,31 @@ def format_dvd_streams(output: str) -> str:
             raise ValueError("FFprobe stream is missing a valid codec type")
         tags = _json_object(stream.get("tags", {}), "stream tags")
         profile = stream.get("profile")
-        lines.append("\t".join(map(_clean, (
-            index, codec_type, stream.get("codec_name"),
-            "" if profile == "unknown" else profile, stream.get("channels"),
-            stream.get("channel_layout"), tags.get("language"), tags.get("title"),
-        ))))
+        lines.append(
+            "\t".join(
+                map(
+                    _clean,
+                    (
+                        index,
+                        codec_type,
+                        stream.get("codec_name"),
+                        "" if profile == "unknown" else profile,
+                        stream.get("channels"),
+                        stream.get("channel_layout"),
+                        tags.get("language"),
+                        tags.get("title"),
+                    ),
+                )
+            )
+        )
     return "\n".join(lines)
 
 
 def main() -> None:
     try:
-        listing = format_dvd_streams(sys.stdin.buffer.read().decode("utf-8")).encode("utf-8")
+        listing = format_dvd_streams(
+            sys.stdin.buffer.read().decode("utf-8")
+        ).encode("utf-8")
     except ValueError as exc:
         sys.exit(f"Invalid DVD stream metadata: {exc}")
     sys.stdout.buffer.write(listing)

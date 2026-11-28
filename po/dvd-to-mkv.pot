@@ -9,76 +9,58 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
+msgid "Choose output type"
+msgstr ""
+
+msgid "The output path does not exist and does not end in .mkv or .m2ts:\n{path}\n\nUse it as a file named {resolved}, or choose Directory to create or select an existing directory before retrying."
+msgstr ""
+
+msgid "Directory"
+msgstr ""
+
+msgid "Choose an existing output directory"
+msgstr ""
+
+msgid "Use as file"
+msgstr ""
+
+msgid "Use the displayed output filename"
+msgstr ""
+
+msgid "Automatic (sample-based)"
+msgstr ""
+
+msgid "Original M2TS (unfiltered output)"
+msgstr ""
+
+msgid "Copy the playlist output without filtering; 3D preservation is not guaranteed."
+msgstr ""
+
+msgid "Unfiltered playlist output (M2TS)."
+msgstr ""
+
+msgid "Playlist {playlist}: M2TS copies the playlist output without filtering"
+msgstr ""
+
+msgid "Copy without filtering?"
+msgstr ""
+
+msgid "Playlist {playlist}: copy unfiltered M2TS output?"
+msgstr ""
+
+msgid "Your filtered selection cannot be applied to M2TS. The playlist output may omit the 3D dependent view."
+msgstr ""
+
+msgid "Warning: The source is not pinned and may change or be replaced. Use a source protected from changes and keep the same disc inserted."
+msgstr ""
+
+msgid "Warning: MKV and M2TS copies may omit the 3D dependent view; 3D preservation is not verified."
+msgstr ""
+
+msgid "M2TS contains the unfiltered playlist output; it may omit a 3D dependent view."
+msgstr ""
+
 msgid "Restart to apply the language. Some messages remain in English."
-msgstr ""
-
-msgid "Batch Titles"
-msgstr ""
-
-msgid "Clear Batch"
-msgstr ""
-
-msgid "Discover and select DVD titles to copy sequentially using the active language profile."
-msgstr ""
-
-msgid "Discard the prepared DVD batch."
-msgstr ""
-
-msgid "DVD batch prepared: {count} title(s)"
-msgstr ""
-
-msgid "Select DVD Titles"
-msgstr ""
-
-msgid "Select titles to copy. Each title is inspected separately and uses the active language profile."
-msgstr ""
-
-msgid "Prepare Batch"
-msgstr ""
-
-msgid "Inspect the selected titles and prepare the batch."
-msgstr ""
-
-msgid "Language profile required"
-msgstr ""
-
-msgid "Choose or create a profile with audio or subtitle languages before preparing a DVD batch."
-msgstr ""
-
-msgid "Preparing DVD batch..."
-msgstr ""
-
-msgid "Copying DVD batch..."
-msgstr ""
-
-msgid "DVD batch prepared"
-msgstr ""
-
-msgid "DVD batch needs preparation again"
-msgstr ""
-
-msgid "Copying DVD title {title} ({current}/{total})..."
-msgstr ""
-
-msgid "DVD batch: titles are copied sequentially. Space estimates are per title, not for the whole batch; free space and output paths are checked again for each copy."
-msgstr ""
-
-msgid "Titles skipped during preparation: {titles}"
-msgstr ""
-
-msgid "Titles skipped during copy preflight (kept in batch): {titles}"
-msgstr ""
-
-msgid "Warning: no audio track matched the profile for DVD title {title}; the output will have no audio."
-msgstr ""
-
-msgid "Warning: no audio track was selected for DVD title {title}; the output will have no audio."
-msgstr ""
-
-msgid "Warning: no audio track was selected for playlist {playlist}; the output will have no audio."
-msgstr ""
-
-msgid "Warning: audio selection could not be determined; check whether the output includes audio."
 msgstr ""
 
 msgid "GUI _language"
@@ -168,6 +150,12 @@ msgstr ""
 msgid "Show unselected"
 msgstr ""
 
+msgid "Show dummy, top menu, and repeated playlists"
+msgstr ""
+
+msgid "Show disc-labelled dummy and top menu playlists, and playlists with repeated video. Labels and repetition do not prove a playlist is unusable."
+msgstr ""
+
 msgid "Hide unselected"
 msgstr ""
 
@@ -187,11 +175,39 @@ msgid "Preview"
 msgstr ""
 
 msgid ""
-"Play the selected DVD title or one selected Blu-ray playlist in FFplay (2D). "
+"Play the selected DVD title or one selected Blu-ray playlist in mpv (2D). "
 "Preview uses the player's tracks, not the copy selections."
 msgstr ""
 
 msgid "Inspect Tracks"
+msgstr ""
+
+msgid "Disc title candidate (unverified)"
+msgstr ""
+
+msgid "Possible main feature (unverified)"
+msgstr ""
+
+msgid "Menu reference (unverified)"
+msgstr ""
+
+msgid "Title set contains director-commentary audio metadata (unverified)"
+msgstr ""
+
+#, python-brace-format
+msgid "Additional audio track: {language} ({channels} channels; possible commentary, unverified)"
+msgstr ""
+
+msgid "Director-commentary audio metadata (unverified)"
+msgstr ""
+
+msgid "Startup reference (unverified)"
+msgstr ""
+
+msgid "Navigation reference (unverified)"
+msgstr ""
+
+msgid "No fixed navigation reference found"
 msgstr ""
 
 msgid "Select All Tracks"
@@ -229,6 +245,9 @@ msgstr ""
 msgid "Select one playlist and click Inspect Tracks"
 msgstr ""
 
+msgid "Choose a playlist"
+msgstr ""
+
 msgid "Choose a playlist to inspect its tracks"
 msgstr ""
 
@@ -263,6 +282,21 @@ msgid "Drives"
 msgstr ""
 
 msgid "Close"
+msgstr ""
+
+msgid "Legalese Pleasantries"
+msgstr ""
+
+msgid "Legal notice"
+msgstr ""
+
+msgid "Read the full legal notice."
+msgstr ""
+
+msgid "Close the legal notice."
+msgstr ""
+
+msgid "Use this software only where copying and any necessary decryption are lawful. The software is provided without warranty."
 msgstr ""
 
 msgid "Verify Existing Copy"
@@ -598,8 +632,9 @@ msgid "Current phase progress and estimated time remaining, when available"
 msgstr ""
 
 msgid ""
-"List DVD titles using lsdvd. Duration and track counts are hints, not "
-"automatic selection."
+"List DVD titles using lsdvd. An extra same-language stereo audio track can "
+"suggest commentary but is unverified. Duration and track counts are hints, "
+"not automatic selection."
 msgstr ""
 
 msgid "Drives (cancelling...)"

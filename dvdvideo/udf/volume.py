@@ -20,6 +20,8 @@ corrected reserve extents, and scanned partitions in bounded sector reads.
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+from __future__ import annotations
+
 import logging
 import struct
 from collections.abc import Callable, Iterator
@@ -27,7 +29,12 @@ from functools import cached_property
 from typing import TYPE_CHECKING
 
 from ..css import DecryptionError
-from .general import DescriptorTag, ExtentAD, MalformedUdfError, UnsupportedUdfError
+from .general import (
+    DescriptorTag,
+    ExtentAD,
+    MalformedUdfError,
+    UnsupportedUdfError,
+)
 
 MAX_FILESET_SCAN_SECTORS = 8192
 MAX_VOLUME_SEQUENCE_SECTORS = 8192
@@ -55,24 +62,54 @@ class AnchorVolumeDescriptorPointer:
 
 
 def _DescriptorSequence(
-    media: Media, location: int, length: int, *, tag_location: int | None = None,
-    require_terminator: bool = False, max_sectors: int | None = None,
+    media: Media,
+    location: int,
+    length: int,
+    *,
+    tag_location: int | None = None,
+    require_terminator: bool = False,
+    max_sectors: int | None = None,
 ) -> Iterator[tuple[DescriptorTag, bytes]]:
     media.validate_extent(location, length)
     if not length or length % 2048:
-        raise MalformedUdfError('Descriptor sequence length must be whole sectors')
+        raise MalformedUdfError(
+            'Descriptor sequence length must be whole sectors'
+        )
     for cur in range(0, length, 2048):
         if max_sectors is not None and cur // 2048 >= max_sectors:
-            raise MalformedUdfError(f'UDF volume descriptor sequence exceeds the {max_sectors}-sector scan limit')
+            raise MalformedUdfError(
+                'UDF volume descriptor sequence exceeds the'
+                f' {max_sectors}-sector scan limit'
+            )
         buf = media.read_sector(location + cur // 2048)
-        tag = DescriptorTag(buf, (location if tag_location is None else tag_location) + cur // 2048)
+        tag = DescriptorTag(
+            buf,
+            (location if tag_location is None else tag_location) + cur // 2048,
+        )
         if tag.identifier == 8:
             return
-        if tag.identifier not in {*range(1, 10), 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266}:
-            raise MalformedUdfError(f'Invalid UDF descriptor identifier: {tag.identifier}')
+        if tag.identifier not in {
+            *range(1, 10),
+            256,
+            257,
+            258,
+            259,
+            260,
+            261,
+            262,
+            263,
+            264,
+            265,
+            266,
+        }:
+            raise MalformedUdfError(
+                f'Invalid UDF descriptor identifier: {tag.identifier}'
+            )
         yield tag, buf
     if require_terminator:
-        raise MalformedUdfError('UDF volume descriptor sequence has no terminating descriptor')
+        raise MalformedUdfError(
+            'UDF volume descriptor sequence has no terminating descriptor'
+        )
 
 
 class Volume:
@@ -82,7 +119,9 @@ class Volume:
 
         try:
             buf = media.read_sector(256)
-            self.anchor = AnchorVolumeDescriptorPointer(DescriptorTag(buf, 256), buf)
+            self.anchor = AnchorVolumeDescriptorPointer(
+                DescriptorTag(buf, 256), buf
+            )
             self._anchor_sector = 256
             return
         except DecryptionError:
@@ -96,7 +135,9 @@ class Volume:
                 continue
             try:
                 buf = media.read_sector(location)
-                self.anchor = AnchorVolumeDescriptorPointer(DescriptorTag(buf, location), buf)
+                self.anchor = AnchorVolumeDescriptorPointer(
+                    DescriptorTag(buf, location), buf
+                )
             except DecryptionError:
                 raise
             except (MalformedUdfError, OSError) as error:
@@ -104,7 +145,11 @@ class Volume:
             else:
                 self._anchor_sector = location
                 self.recovery_used = True
-                logger.warning('Primary UDF anchor unavailable; using backup at sector %d', location)
+                logger.warning(
+                    'Primary UDF anchor unavailable; using backup at'
+                    ' sector %d',
+                    location,
+                )
                 return
         raise MalformedUdfError('No valid UDF anchor: ' + '; '.join(errors))
 
@@ -128,7 +173,9 @@ class Volume:
                 pass
 
         if 0 not in descriptors:
-            raise MalformedUdfError('No UDF partition descriptor for DVD partition 0 found')
+            raise MalformedUdfError(
+                'No UDF partition descriptor for DVD partition 0 found'
+            )
         return {
             number: Partition(self._media, self, tag, buf)
             for number, (_, tag, buf) in descriptors.items()
@@ -141,12 +188,17 @@ class Volume:
     def read_with_fallback[T](self, read: Callable[[], T]) -> T:
         return self._find_partitions(read)[1]
 
-    def _find_partitions[T](self, read: Callable[[], T]) -> tuple[dict[int, Partition], T]:
+    def _find_partitions[T](
+        self, read: Callable[[], T]
+    ) -> tuple[dict[int, Partition], T]:
         errors: list[str] = []
 
-        def read_anchor(anchor: AnchorVolumeDescriptorPointer, location: int) -> tuple[dict[int, Partition], T] | None:
+        def read_anchor(
+            anchor: AnchorVolumeDescriptorPointer, location: int
+        ) -> tuple[dict[int, Partition], T] | None:
             for name, extent in (
-                ('main', anchor.main_descriptor_extent), ('reserve', anchor.reserve_descriptor_extent),
+                ('main', anchor.main_descriptor_extent),
+                ('reserve', anchor.reserve_descriptor_extent),
             ):
                 try:
                     partitions = self._read_descriptors(extent)
@@ -160,12 +212,22 @@ class Volume:
                             self.__dict__.pop('partitions', None)
                 except DecryptionError:
                     raise
-                except (MalformedUdfError, UnsupportedUdfError, OSError) as error:
-                    errors.append(f'anchor {location} {name} sequence: {error}')
+                except (
+                    MalformedUdfError,
+                    UnsupportedUdfError,
+                    OSError,
+                ) as error:
+                    errors.append(
+                        f'anchor {location} {name} sequence: {error}'
+                    )
                 else:
                     if name == 'reserve':
                         self.recovery_used = True
-                        logger.warning('Main UDF descriptor sequence unavailable; using reserve at anchor %d', location)
+                        logger.warning(
+                            'Main UDF descriptor sequence unavailable; using'
+                            ' reserve at anchor %d',
+                            location,
+                        )
                     return partitions, result
             return None
 
@@ -179,7 +241,9 @@ class Volume:
                 continue
             try:
                 buf = self._media.read_sector(location)
-                anchor = AnchorVolumeDescriptorPointer(DescriptorTag(buf, location), buf)
+                anchor = AnchorVolumeDescriptorPointer(
+                    DescriptorTag(buf, location), buf
+                )
             except DecryptionError:
                 raise
             except (MalformedUdfError, OSError) as error:
@@ -190,9 +254,15 @@ class Volume:
                 self.anchor = anchor
                 self._anchor_sector = location
                 self.recovery_used = True
-                logger.warning('UDF descriptor sequences unavailable; using backup anchor at sector %d', location)
+                logger.warning(
+                    'UDF descriptor sequences unavailable; using backup anchor'
+                    ' at sector %d',
+                    location,
+                )
                 return data
-        raise MalformedUdfError('No readable UDF descriptor sequence: ' + '; '.join(errors))
+        raise MalformedUdfError(
+            'No readable UDF descriptor sequence: ' + '; '.join(errors)
+        )
 
 
 class Partition:
@@ -205,7 +275,9 @@ class Partition:
         data = cls._struct.unpack(buf[:512])
         return data[0], data[2]
 
-    def __init__(self, media: Media, volume: Volume, tag: DescriptorTag, buf: bytes) -> None:
+    def __init__(
+        self, media: Media, volume: Volume, tag: DescriptorTag, buf: bytes
+    ) -> None:
         self._media = media
         self._volume = volume
 
@@ -217,7 +289,13 @@ class Partition:
             raise MalformedUdfError('Truncated partition descriptor')
         tag.require_crc_length(180)
         data = self._struct.unpack(buf[:512])
-        self.sequence_number, self.flags, self.number, self.location, self.length = data
+        (
+            self.sequence_number,
+            self.flags,
+            self.number,
+            self.location,
+            self.length,
+        ) = data
         media.validate_extent(self.location, self.length * 2048)
 
     @cached_property
@@ -225,11 +303,20 @@ class Partition:
         from .filesystem import FileSet
 
         scan_length = min(self.length, MAX_FILESET_SCAN_SECTORS) * 2048
-        seq = _DescriptorSequence(self._media, self.location, scan_length, tag_location=0)
+        seq = _DescriptorSequence(
+            self._media, self.location, scan_length, tag_location=0
+        )
 
         for tag, buf in seq:
             if tag.identifier == 256:
-                return FileSet(self._media, self._volume, self.number, tag, buf)
+                return FileSet(
+                    self._media, self._volume, self.number, tag, buf
+                )
         if self.length > MAX_FILESET_SCAN_SECTORS:
-            raise MalformedUdfError(f'File-set descriptor not found within scan limit in partition {self.number}')
-        raise MalformedUdfError(f'No file-set descriptor in partition {self.number}')
+            raise MalformedUdfError(
+                'File-set descriptor not found within scan limit in partition'
+                f' {self.number}'
+            )
+        raise MalformedUdfError(
+            f'No file-set descriptor in partition {self.number}'
+        )

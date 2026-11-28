@@ -19,6 +19,8 @@ bounded metadata reads, and validated source extents.
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+from __future__ import annotations
+
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -43,8 +45,12 @@ class Media:
 
     def read(self, count: int) -> bytes:
         if count < 0 or count > self.MAX_METADATA_BYTES:
-            raise MalformedUdfError('UDF metadata read exceeds the 16 MiB limit')
-        count_align = (count + self._sector_size - 1) & ~(self._sector_size - 1)
+            raise MalformedUdfError(
+                'UDF metadata read exceeds the 16 MiB limit'
+            )
+        count_align = (count + self._sector_size - 1) & ~(
+            self._sector_size - 1
+        )
         if self._file.tell() + count_align > self._file.size:
             raise MalformedUdfError('UDF metadata read exceeds source bounds')
         data = self._file.read(count_align)
@@ -53,8 +59,14 @@ class Media:
         return data
 
     def validate_extent(self, offset: int, length: int) -> None:
-        if offset < 0 or length < 0 or offset * self._sector_size + length > self._file.size:
-            raise MalformedUdfError(f'UDF extent outside source: sector {offset}, {length} bytes')
+        if (
+            offset < 0
+            or length < 0
+            or offset * self._sector_size + length > self._file.size
+        ):
+            raise MalformedUdfError(
+                f'UDF extent outside source: sector {offset}, {length} bytes'
+            )
 
     def read_sector(self, offset: int, count: int = 2048) -> bytes:
         self.validate_extent(offset, count)

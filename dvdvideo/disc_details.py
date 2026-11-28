@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# Malformed external metadata uses the same ValueError contract as the listing helpers.
+# Malformed external metadata uses the listing helpers' ValueError contract.
 # ruff: noqa: TRY004
 
 import json
@@ -32,7 +32,10 @@ from dvdvideo.gui_translation import identity
 MAX_CHAPTERS = 2000
 MAX_VALUE_CHARS = 200
 MAX_REPORT_CHARS = 512 * 1024
-UNSAFE_TEXT = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ud800-\udfff]")
+UNSAFE_TEXT = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e"
+    r"\u2066-\u2069\ud800-\udfff]"
+)
 
 
 @dataclass(frozen=True)
@@ -49,12 +52,27 @@ class DiscDetails:
 
     def text(self, translate: Callable[[str], str] = identity) -> str:
         sections = [
-            section.heading + "\n" + "\n".join(f"  {label}: {value}" for label, value in section.fields)
+            section.heading
+            + "\n"
+            + "\n".join(
+                f"  {label}: {value}" for label, value in section.fields
+            )
             for section in self.sections
         ]
-        text = "\n\n".join(sections + [translate("Notes") + "\n" + "\n".join(f"  {note}" for note in self.notes)])
+        text = "\n\n".join(
+            sections
+            + [
+                translate("Notes")
+                + "\n"
+                + "\n".join(f"  {note}" for note in self.notes)
+            ]
+        )
         if self.truncated or len(text) > MAX_REPORT_CHARS:
-            return text[:MAX_REPORT_CHARS] + "\n\n" + translate("Details truncated to keep the view responsive.")
+            return (
+                text[:MAX_REPORT_CHARS]
+                + "\n\n"
+                + translate("Details truncated to keep the view responsive.")
+            )
         return text
 
 
@@ -65,7 +83,13 @@ class SectionBuffer:
         self.truncated = False
 
     def append(self, section: DetailSection) -> None:
-        size = len(section.heading) + 2 + sum(len(label) + len(value) + 5 for label, value in section.fields)
+        size = (
+            len(section.heading)
+            + 2
+            + sum(
+                len(label) + len(value) + 5 for label, value in section.fields
+            )
+        )
         if self.truncated or self.size + size > MAX_REPORT_CHARS:
             self.truncated = True
             return
@@ -97,11 +121,15 @@ def _value(value: object, translate: Callable[[str], str]) -> str:
         return str(value)[:MAX_VALUE_CHARS]
     if isinstance(value, float) and math.isfinite(value):
         return str(value)
-    raise ValueError("Detail values must be text, finite numbers, or booleans.")
+    raise ValueError(
+        "Detail values must be text, finite numbers, or booleans."
+    )
 
 
 def _fields(
-    record: dict[str, object], names: tuple[tuple[str, str], ...], translate: Callable[[str], str],
+    record: dict[str, object],
+    names: tuple[tuple[str, str], ...],
+    translate: Callable[[str], str],
 ) -> tuple[tuple[str, str], ...]:
     fields: list[tuple[str, str]] = []
     for key, label in names:
@@ -110,54 +138,121 @@ def _fields(
             fields.append((translate(label), _value(value, translate)))
     size = record.get("filesize")
     if size is not None:
-        if not isinstance(size, int) or isinstance(size, bool) or not 0 <= size <= 2**63 - 1:
-            raise ValueError("Playlist size must be a non-negative 64-bit integer.")
-        fields.append((translate("Playlist size"), translate("{gib:.2f} GiB ({size} bytes)").format(
-            gib=size / 1024**3, size=size,
-        )))
+        if (
+            not isinstance(size, int)
+            or isinstance(size, bool)
+            or not 0 <= size <= 2**63 - 1
+        ):
+            raise ValueError(
+                "Playlist size must be a non-negative 64-bit integer."
+            )
+        fields.append(
+            (
+                translate("Playlist size"),
+                translate("{gib:.2f} GiB ({size} bytes)").format(
+                    gib=size / 1024**3,
+                    size=size,
+                ),
+            )
+        )
     return tuple(fields)
 
 
 def _bounded(
-    records: list[object], limit: int, name: str, notes: list[str], translate: Callable[[str], str],
+    records: list[object],
+    limit: int,
+    name: str,
+    notes: list[str],
+    translate: Callable[[str], str],
 ) -> list[object]:
     if len(records) > limit:
-        notes.append(translate("{name}: showing the first {limit} of {count} entries.").format(
-            name=name, limit=limit, count=len(records),
-        ))
+        notes.append(
+            translate(
+                "{name}: showing the first {limit} of {count} entries."
+            ).format(
+                name=name,
+                limit=limit,
+                count=len(records),
+            )
+        )
     return records[:limit]
 
 
 def parse_disc_details(
-    output: str, *, is_bluray: bool, playlist: str | None = None, dvd_title: str = "1",
+    output: str,
+    *,
+    is_bluray: bool,
+    playlist: str | None = None,
+    dvd_title: str = "1",
     translate: Callable[[str], str] = identity,
 ) -> DiscDetails:
     data = _object(json.loads(output), "Disc metadata")
     sections = SectionBuffer()
-    notes = [translate("These are reported metadata, not a full-disc integrity or playback check.")]
+    notes = [
+        translate(
+            "These are reported metadata, not a full-disc integrity or"
+            " playback check."
+        )
+    ]
     if is_bluray:
         disc = _object(data.get("bluray"), "Blu-ray information")
         titles = _records(data.get("titles"), "Playlists")
         if playlist is not None:
-            reported = str(_object(titles[0], "Playlist").get("playlist")) if len(titles) == 1 else ""
+            reported = (
+                str(_object(titles[0], "Playlist").get("playlist"))
+                if len(titles) == 1
+                else ""
+            )
             if (
                 re.fullmatch(r"[0-9]{1,5}", playlist) is None
                 or re.fullmatch(r"[0-9]{1,5}", reported) is None
                 or int(reported) != int(playlist)
             ):
-                raise ValueError("Metadata must describe the requested playlist only.")
-        sections.append(DetailSection(translate("Blu-ray disc"), _fields(disc, (
-            ("disc name", "Name"), ("udf title", "Volume label"),
-            ("titles", "Reported titles"), ("main playlist", "Main feature candidate"),
-            ("longest playlist", "Longest playlist candidate"),
-            ("3D content", "3D content reported"), ("initial mode", "Initial mode"),
-            ("aacs", "AACS reported"), ("bdplus", "BD+ reported"), ("bd-j", "Java menus"),
-        ), translate)))
-        notes.append(translate("A disc's 3D label does not verify MVC in every playlist; candidate playlists are only hints."))
+                raise ValueError(
+                    "Metadata must describe the requested playlist only."
+                )
+        sections.append(
+            DetailSection(
+                translate("Blu-ray disc"),
+                _fields(
+                    disc,
+                    (
+                        ("disc name", "Name"),
+                        ("udf title", "Volume label"),
+                        ("titles", "Reported titles"),
+                        ("main playlist", "Main feature candidate"),
+                        ("longest playlist", "Longest playlist candidate"),
+                        ("3D content", "3D content reported"),
+                        ("initial mode", "Initial mode"),
+                        ("aacs", "AACS reported"),
+                        ("bdplus", "BD+ reported"),
+                        ("bd-j", "Java menus"),
+                    ),
+                    translate,
+                ),
+            )
+        )
+        notes.append(
+            translate(
+                "A disc's 3D label does not verify MVC in every playlist;"
+                " candidate playlists are only hints."
+            )
+        )
         if playlist is None:
-            notes.append(translate("Select one playlist and open Disc Details again for its tracks and chapter markers."))
+            notes.append(
+                translate(
+                    "Select one playlist and open Disc Details again for its"
+                    " tracks and chapter markers."
+                )
+            )
         seen_playlists: set[int] = set()
-        for item in _bounded(titles, MAX_INSPECTION_ROWS, translate("Playlists"), notes, translate):
+        for item in _bounded(
+            titles,
+            MAX_INSPECTION_ROWS,
+            translate("Playlists"),
+            notes,
+            translate,
+        ):
             title = _object(item, "Playlist")
             identifier = str(title.get("playlist"))
             if re.fullmatch(r"[0-9]{1,5}", identifier) is None:
@@ -169,12 +264,26 @@ def parse_disc_details(
                 ("length", "Reported duration"), ("angles", "Angles"),
             ), translate)
             if "chapters" in title:
-                fields += ((translate("Chapters"), str(len(_records(title["chapters"], "Chapters")))),)
-            sections.append(DetailSection(translate("Playlist {id}").format(id=int(identifier)), fields))
+                fields += (
+                    (
+                        translate("Chapters"),
+                        str(len(_records(title["chapters"], "Chapters"))),
+                    ),
+                )
+            sections.append(
+                DetailSection(
+                    translate("Playlist {id}").format(id=int(identifier)),
+                    fields,
+                )
+            )
             for kind in ("video", "audio", "subtitles"):
                 tracks = _records(title.get(kind, []), f"{kind} tracks")
-                group = translate("Playlist {id} {kind}").format(id=identifier, kind=translate(kind))
-                for track_value in _bounded(tracks, MAX_STREAM_ROWS, group, notes, translate):
+                group = translate("Playlist {id} {kind}").format(
+                    id=identifier, kind=translate(kind)
+                )
+                for track_value in _bounded(
+                    tracks, MAX_STREAM_ROWS, group, notes, translate
+                ):
                     track = _object(track_value, "Track")
                     pid = track.get("stream")
                     if not isinstance(pid, str):
@@ -183,43 +292,118 @@ def parse_disc_details(
                     heading = translate("Playlist {id} / {kind} {pid}").format(
                         id=identifier, kind=translate(kind), pid=pid,
                     )
-                    sections.append(DetailSection(heading, _fields(track, (
-                        ("codec", "Codec"), ("codec name", "Codec name"), ("language", "Language"),
-                        ("format", "Format"), ("aspect ratio", "Aspect ratio"),
-                        ("framerate", "Frame rate"), ("rate", "Reported sample rate"),
-                    ), translate)))
+                    sections.append(
+                        DetailSection(
+                            heading,
+                            _fields(
+                                track,
+                                (
+                                    ("codec", "Codec"),
+                                    ("codec name", "Codec name"),
+                                    ("language", "Language"),
+                                    ("format", "Format"),
+                                    ("aspect ratio", "Aspect ratio"),
+                                    ("framerate", "Frame rate"),
+                                    ("rate", "Reported sample rate"),
+                                ),
+                                translate,
+                            ),
+                        )
+                    )
             if "chapters" in title:
                 _chapters(
-                    title["chapters"], translate("Playlist {id}").format(id=identifier), True, sections, notes, translate,
+                    title["chapters"],
+                    translate("Playlist {id}").format(id=identifier),
+                    True,
+                    sections,
+                    notes,
+                    translate,
                 )
     else:
         if playlist is not None:
-            raise ValueError("Blu-ray playlist selection is not valid for DVD details.")
+            raise ValueError(
+                "Blu-ray playlist selection is not valid for DVD details."
+            )
         title = _object(data.get("format"), "DVD title information")
         tracks = _records(data.get("streams"), "DVD streams")
         from dvdvideo.gui_commands import validate_dvd_title
         validate_dvd_title(dvd_title)
-        sections.append(DetailSection(translate("DVD / title {id}").format(id=dvd_title), _fields(title, (
-            ("format_long_name", "Format"), ("duration", "Duration (seconds)"),
-            ("nb_streams", "Reported streams"),
-        ), translate)))
-        notes.append(translate("DVD details cover title {id}; this is not a list of every DVD title.").format(id=dvd_title))
+        sections.append(
+            DetailSection(
+                translate("DVD / title {id}").format(id=dvd_title),
+                _fields(
+                    title,
+                    (
+                        ("format_long_name", "Format"),
+                        ("duration", "Duration (seconds)"),
+                        ("nb_streams", "Reported streams"),
+                    ),
+                    translate,
+                ),
+            )
+        )
+        notes.append(
+            translate(
+                "DVD details cover title {id}; this is not a list of every DVD"
+                " title."
+            ).format(id=dvd_title)
+        )
         seen: set[int] = set()
-        for item in _bounded(tracks, MAX_INSPECTION_ROWS, translate("DVD tracks"), notes, translate):
+        for item in _bounded(
+            tracks,
+            MAX_INSPECTION_ROWS,
+            translate("DVD tracks"),
+            notes,
+            translate,
+        ):
             track = _object(item, "DVD track")
             identifier = track.get("index")
-            if not isinstance(identifier, int) or isinstance(identifier, bool) or not 0 <= identifier <= 9999 or identifier in seen:
+            if (
+                not isinstance(identifier, int)
+                or isinstance(identifier, bool)
+                or not 0 <= identifier <= 9999
+                or identifier in seen
+            ):
                 raise ValueError("Invalid or duplicate DVD stream index.")
             seen.add(identifier)
             tags = _object(track.get("tags", {}), "Track tags")
-            sections.append(DetailSection(translate("Stream {id}").format(id=identifier), _fields(track, (
-                ("codec_type", "Type"), ("codec_name", "Codec"), ("profile", "Profile"),
-                ("width", "Width"), ("height", "Height"), ("display_aspect_ratio", "Aspect ratio"),
-                ("avg_frame_rate", "Frame rate"), ("channels", "Channels"),
-                ("channel_layout", "Channel layout"), ("sample_rate", "Sample rate (Hz)"),
-            ), translate) + _fields(tags, (("language", "Language"), ("title", "Name")), translate)))
-        _chapters(data.get("chapters", []), translate("DVD title {id}").format(id=dvd_title), False, sections, notes, translate)
-    return DiscDetails(tuple(sections.sections), tuple(notes), sections.truncated)
+            sections.append(
+                DetailSection(
+                    translate("Stream {id}").format(id=identifier),
+                    _fields(
+                        track,
+                        (
+                            ("codec_type", "Type"),
+                            ("codec_name", "Codec"),
+                            ("profile", "Profile"),
+                            ("width", "Width"),
+                            ("height", "Height"),
+                            ("display_aspect_ratio", "Aspect ratio"),
+                            ("avg_frame_rate", "Frame rate"),
+                            ("channels", "Channels"),
+                            ("channel_layout", "Channel layout"),
+                            ("sample_rate", "Sample rate (Hz)"),
+                        ),
+                        translate,
+                    )
+                    + _fields(
+                        tags,
+                        (("language", "Language"), ("title", "Name")),
+                        translate,
+                    ),
+                )
+            )
+        _chapters(
+            data.get("chapters", []),
+            translate("DVD title {id}").format(id=dvd_title),
+            False,
+            sections,
+            notes,
+            translate,
+        )
+    return DiscDetails(
+        tuple(sections.sections), tuple(notes), sections.truncated
+    )
 
 
 def _chapters(
@@ -230,12 +414,22 @@ def _chapters(
     chapters = _records(value, "Chapters")
     fields: list[tuple[str, str]] = [(translate("Count"), str(len(chapters)))]
     group = translate("{name} chapters").format(name=name)
-    for index, item in enumerate(_bounded(chapters, MAX_CHAPTERS, group, notes, translate), 1):
+    for index, item in enumerate(
+        _bounded(chapters, MAX_CHAPTERS, group, notes, translate), 1
+    ):
         chapter = _object(item, "Chapter")
         key = "start time" if is_bluray else "start_time"
         start = chapter.get(key)
         if start is None:
             raise ValueError("Chapter is missing its start time.")
-        label = translate("Chapter {index:03d}") if is_bluray else translate("Chapter {index:03d} (seconds)")
+        label = (
+            translate("Chapter {index:03d}")
+            if is_bluray
+            else translate("Chapter {index:03d} (seconds)")
+        )
         fields.append((label.format(index=index), _value(start, translate)))
-    sections.append(DetailSection(translate("{name} / chapters").format(name=name), tuple(fields)))
+    sections.append(
+        DetailSection(
+            translate("{name} / chapters").format(name=name), tuple(fields)
+        )
+    )

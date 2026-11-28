@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# Keep ValueError for invalid persisted data and the GUI's existing validation contract.
+# Keep ValueError for invalid data and the GUI's validation contract.
 # ruff: noqa: TRY004
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from dvdvideo.gui_preferences_io import (
     PreferenceSnapshot,
     write_preferences,
 )
+from dvdvideo.gui_support import absolute_path
 
 DEFAULT_PROFILE_NAME = "Default"
 VALID_OUTPUT_FORMATS = frozenset({"auto", "mkv", "m2ts"})
@@ -65,18 +66,20 @@ class Profile:
     audio_languages: tuple[str, ...] = ()
     subtitle_languages: tuple[str, ...] = ()
     output_format: str = "auto"
-    minimum_minutes: int = 2
+    minimum_minutes: int = 5
 
 
 @dataclass
 class SourcePreferences:
     profile_name: str = DEFAULT_PROFILE_NAME
     output_format: str = "auto"
-    minimum_minutes: int = 2
+    minimum_minutes: int = 5
     dvd_streams: list[str] = field(default_factory=_new_string_list)
     playlists: list[str] = field(default_factory=_new_string_list)
-    playlist_streams: dict[str, list[str]] = field(default_factory=_new_string_list_map)
-    # Older records already contain explicit DVD selections, including empty ones.
+    playlist_streams: dict[str, list[str]] = field(
+        default_factory=_new_string_list_map
+    )
+    # Older records already contain explicit DVD selections, including empty.
     dvd_inspected: bool = True
     dvd_title: str = "1"
 
@@ -100,8 +103,16 @@ def _normalize_source(preferences: SourcePreferences) -> SourcePreferences:
         ))
     return replace(
         preferences,
-        dvd_streams=list(dict.fromkeys(_numeric_id(value) for value in preferences.dvd_streams)),
-        playlists=list(dict.fromkeys(_numeric_id(value) for value in preferences.playlists)),
+        dvd_streams=list(
+            dict.fromkeys(
+                _numeric_id(value) for value in preferences.dvd_streams
+            )
+        ),
+        playlists=list(
+            dict.fromkeys(
+                _numeric_id(value) for value in preferences.playlists
+            )
+        ),
         playlist_streams=streams,
     )
 
@@ -111,7 +122,10 @@ def _copy_source(preferences: SourcePreferences) -> SourcePreferences:
         preferences,
         dvd_streams=list(preferences.dvd_streams),
         playlists=list(preferences.playlists),
-        playlist_streams={key: list(value) for key, value in preferences.playlist_streams.items()},
+        playlist_streams={
+            key: list(value)
+            for key, value in preferences.playlist_streams.items()
+        },
     )
 
 
@@ -131,7 +145,9 @@ def parse_language_codes(value: str) -> tuple[str, ...]:
 @lru_cache(maxsize=1)
 def language_aliases() -> dict[str, str]:
     try:
-        data: object = json.loads(ISO_LANGUAGE_CODES.read_text(encoding="utf-8"))
+        data: object = json.loads(
+            ISO_LANGUAGE_CODES.read_text(encoding="utf-8")
+        )
         if not isinstance(data, dict):
             raise ValueError("expected an object")
         records: object = cast(dict[str, object], data).get("639-2")
@@ -143,21 +159,34 @@ def language_aliases() -> dict[str, str]:
                 raise ValueError("expected a language record")
             record = cast(dict[str, object], value)
             canonical = record.get("alpha_3")
-            if canonical == "qaa-qtz" and "alpha_2" not in record and "bibliographic" not in record:
+            if (
+                canonical == "qaa-qtz"
+                and "alpha_2" not in record
+                and "bibliographic" not in record
+            ):
                 continue
-            if not isinstance(canonical, str) or re.fullmatch(r"[a-z]{3}", canonical) is None:
+            if (
+                not isinstance(canonical, str)
+                or re.fullmatch(r"[a-z]{3}", canonical) is None
+            ):
                 raise ValueError("invalid three-letter language code")
             for key in ("alpha_2", "bibliographic"):
                 alias = record.get(key)
                 if alias is not None:
-                    if not isinstance(alias, str) or re.fullmatch(r"[a-z]{2,3}", alias) is None:
+                    if (
+                        not isinstance(alias, str)
+                        or re.fullmatch(r"[a-z]{2,3}", alias) is None
+                    ):
                         raise ValueError("invalid language alias")
                     aliases[alias] = canonical
         if not aliases:
             raise ValueError("no language aliases")
         return aliases
     except (OSError, ValueError) as error:
-        raise ValueError(f"Cannot load ISO language codes from {ISO_LANGUAGE_CODES}: {error}") from error
+        raise ValueError(
+            f"Cannot load ISO language codes from {ISO_LANGUAGE_CODES}:"
+            f" {error}"
+        ) from error
 
 
 def canonical_language(code: str, aliases: dict[str, str]) -> str:
@@ -169,8 +198,14 @@ def select_tracks(profile: Profile, tracks: list[TrackInfo]) -> list[str]:
     if not profile.audio_languages and not profile.subtitle_languages:
         return []
     aliases = language_aliases()
-    audio_languages = {canonical_language(language, aliases) for language in profile.audio_languages}
-    subtitle_languages = {canonical_language(language, aliases) for language in profile.subtitle_languages}
+    audio_languages = {
+        canonical_language(language, aliases)
+        for language in profile.audio_languages
+    }
+    subtitle_languages = {
+        canonical_language(language, aliases)
+        for language in profile.subtitle_languages
+    }
     if not audio_languages and not subtitle_languages:
         return []
     selected: list[str] = []
@@ -180,7 +215,10 @@ def select_tracks(profile: Profile, tracks: list[TrackInfo]) -> list[str]:
         if (
             kind == "video"
             or (kind == "audio" and language in audio_languages)
-            or (kind in ("subtitle", "subtitles") and language in subtitle_languages)
+            or (
+                kind in ("subtitle", "subtitles")
+                and language in subtitle_languages
+            )
         ):
             selected.append(track.identifier)
     return selected
@@ -189,7 +227,11 @@ def select_tracks(profile: Profile, tracks: list[TrackInfo]) -> list[str]:
 def _preferences_path() -> Path:
     config_home = os.environ.get("XDG_CONFIG_HOME")
     candidate = Path(config_home) if config_home else None
-    root = candidate if candidate is not None and candidate.is_absolute() else Path.home() / ".config"
+    root = (
+        candidate
+        if candidate is not None and candidate.is_absolute()
+        else Path.home() / ".config"
+    )
     return root / "dvd-to-mkv-gui" / "preferences.json"
 
 
@@ -213,6 +255,7 @@ class PreferencesStore:
         }
         self.active_profile = DEFAULT_PROFILE_NAME
         self.gui_language = "system"
+        self.legal_notice_seen = False
         self._sources: dict[str, SourcePreferences] = {}
         self.device_sources: set[str] = set()
         language_aliases()
@@ -220,7 +263,10 @@ class PreferencesStore:
 
     @staticmethod
     def source_key(source: str) -> str:
-        return os.path.normcase(os.path.abspath(source))
+        path = absolute_path(source)
+        if ".." not in path.split(os.sep):
+            path = os.path.normpath(path)
+        return os.path.normcase(path)
 
     @property
     def profile_names(self) -> list[str]:
@@ -228,20 +274,32 @@ class PreferencesStore:
 
     @property
     def sources(self) -> dict[str, SourcePreferences]:
-        return {key: _copy_source(value) for key, value in self._sources.items()}
+        return {
+            key: _copy_source(value) for key, value in self._sources.items()
+        }
 
     def get_profile(self, name: str | None = None) -> Profile:
         selected_name = name or self.active_profile
-        return self.profiles.get(selected_name, self.profiles[DEFAULT_PROFILE_NAME])
+        return self.profiles.get(
+            selected_name, self.profiles[DEFAULT_PROFILE_NAME]
+        )
 
     def save_profile(
-        self, profile: Profile, *, previous_name: str | None = None, activate: bool = False,
+        self,
+        profile: Profile,
+        *,
+        previous_name: str | None = None,
+        activate: bool = False,
     ) -> None:
         name = _validated_string(profile.name, "Profile name").strip()
         _validate_profile_name(name)
-        output_format = _validated_string(profile.output_format, "Output format")
+        output_format = _validated_string(
+            profile.output_format, "Output format"
+        )
         if output_format not in VALID_OUTPUT_FORMATS:
-            raise ValueError(f"Unsupported output format: {profile.output_format}")
+            raise ValueError(
+                f"Unsupported output format: {profile.output_format}"
+            )
         minimum_minutes = _validated_minutes(profile.minimum_minutes)
         profile = Profile(
             name,
@@ -254,9 +312,15 @@ class PreferencesStore:
             raise ValueError(f"Profile does not exist: {previous_name}")
         renaming = previous_name is not None and previous_name != name
         if renaming and previous_name == DEFAULT_PROFILE_NAME:
-            raise ValueError("The Default profile cannot be renamed; use New to create another profile.")
+            raise ValueError(
+                "The Default profile cannot be renamed; use New to create"
+                " another profile."
+            )
         if renaming and name in self.profiles:
-            raise ValueError("A profile with that name already exists; select it to edit it.")
+            raise ValueError(
+                "A profile with that name already exists; select it to"
+                " edit it."
+            )
         profiles = self.profiles.copy()
         active_profile = self.active_profile
         sources = self._sources.copy()
@@ -294,7 +358,9 @@ class PreferencesStore:
             self.active_profile = DEFAULT_PROFILE_NAME
         for key, source in self._sources.items():
             if source.profile_name == name:
-                self._sources[key] = replace(source, profile_name=DEFAULT_PROFILE_NAME)
+                self._sources[key] = replace(
+                    source, profile_name=DEFAULT_PROFILE_NAME
+                )
         try:
             self._write()
         except PreferencesDurabilityError:
@@ -332,8 +398,22 @@ class PreferencesStore:
             self.gui_language = previous
             raise
 
+    def mark_legal_notice_seen(self) -> None:
+        previous = self.legal_notice_seen
+        self.legal_notice_seen = True
+        try:
+            self._write()
+        except PreferencesDurabilityError:
+            raise
+        except Exception:
+            self.legal_notice_seen = previous
+            raise
+
     def get_source(self, source: str) -> SourcePreferences | None:
-        if not reusable_source(source) or self.source_key(source) in self.device_sources:
+        if (
+            not reusable_source(source)
+            or self.source_key(source) in self.device_sources
+        ):
             return None
         preferences = self._sources.get(self.source_key(source))
         return _copy_source(preferences) if preferences is not None else None
@@ -342,17 +422,28 @@ class PreferencesStore:
         self.device_sources.add(self.source_key(source))
 
     def save_source(self, source: str, preferences: SourcePreferences) -> None:
-        profile_name = _validated_string(preferences.profile_name, "profile_name")
+        profile_name = _validated_string(
+            preferences.profile_name, "profile_name"
+        )
         if profile_name not in self.profiles:
             raise ValueError(f"Profile does not exist: {profile_name}")
-        output_format = _validated_string(preferences.output_format, "output_format")
+        output_format = _validated_string(
+            preferences.output_format, "output_format"
+        )
         if output_format not in VALID_OUTPUT_FORMATS:
-            raise ValueError(f"Unsupported output format: {preferences.output_format}")
+            raise ValueError(
+                f"Unsupported output format: {preferences.output_format}"
+            )
         _validated_minutes(preferences.minimum_minutes)
         _json_string_list(preferences.dvd_streams, "dvd_streams")
         _json_string_list(preferences.playlists, "playlists")
-        _string_list_map({"playlist_streams": preferences.playlist_streams}, "playlist_streams")
-        _optional_bool({"dvd_inspected": preferences.dvd_inspected}, "dvd_inspected", True)
+        _string_list_map(
+            {"playlist_streams": preferences.playlist_streams},
+            "playlist_streams",
+        )
+        _optional_bool(
+            {"dvd_inspected": preferences.dvd_inspected}, "dvd_inspected", True
+        )
         if re.fullmatch(r"[1-9][0-9]?", preferences.dvd_title) is None:
             raise ValueError("Invalid DVD title.")
         preferences = _normalize_source(preferences)
@@ -403,15 +494,24 @@ class PreferencesStore:
                 raise ValueError("preferences file exceeds the 4 MiB limit")
             text = content.decode("utf-8")
         except (OSError, ValueError) as error:
-            raise ValueError(f"Cannot read GUI preferences at {self.path}: {error}") from error
+            raise ValueError(
+                f"Cannot read GUI preferences at {self.path}: {error}"
+            ) from error
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
         try:
             data = json.loads(text)
             self._read_data(data)
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
-            raise ValueError(f"Cannot read GUI preferences at {self.path}: {error}") from error
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise ValueError(
+                f"Cannot read GUI preferences at {self.path}: {error}"
+            ) from error
 
     def _read_data(self, data: Any) -> None:
         data_object = _json_object(data)
@@ -430,33 +530,56 @@ class PreferencesStore:
                 minimum_minutes=_required_int(item, "minimum_minutes"),
             )
             _validate_profile_name(profile.name)
-            if profile.output_format not in VALID_OUTPUT_FORMATS or not 0 <= profile.minimum_minutes <= 600:
-                raise ValueError(f"invalid settings in profile {profile.name!r}")
+            if (
+                profile.output_format not in VALID_OUTPUT_FORMATS
+                or not 0 <= profile.minimum_minutes <= 600
+            ):
+                raise ValueError(
+                    f"invalid settings in profile {profile.name!r}"
+                )
             loaded_profiles[profile.name] = profile
         self.profiles = loaded_profiles
         active: Any = data_object.get("active_profile", DEFAULT_PROFILE_NAME)
         if not isinstance(active, str):
             raise ValueError("active_profile must be a string")
-        self.active_profile = active if active in loaded_profiles else DEFAULT_PROFILE_NAME
+        self.active_profile = (
+            active if active in loaded_profiles else DEFAULT_PROFILE_NAME
+        )
         language = _optional_str(data_object, "gui_language", "system")
         if language not in VALID_GUI_LANGUAGES:
             raise ValueError("invalid GUI language")
         self.gui_language = language
+        self.legal_notice_seen = _optional_bool(
+            data_object, "legal_notice_seen", False
+        )
         for key, value in sources.items():
             source_data = _json_object(value)
             settings = SourcePreferences(
-                profile_name=_optional_str(source_data, "profile_name", DEFAULT_PROFILE_NAME),
-                output_format=_optional_str(source_data, "output_format", "auto"),
-                minimum_minutes=_optional_int(source_data, "minimum_minutes", 2),
+                profile_name=_optional_str(
+                    source_data, "profile_name", DEFAULT_PROFILE_NAME
+                ),
+                output_format=_optional_str(
+                    source_data, "output_format", "auto"
+                ),
+                minimum_minutes=_optional_int(
+                    source_data, "minimum_minutes", 5
+                ),
                 dvd_streams=_string_list(source_data, "dvd_streams"),
                 playlists=_string_list(source_data, "playlists"),
-                playlist_streams=_string_list_map(source_data, "playlist_streams"),
-                dvd_inspected=_optional_bool(source_data, "dvd_inspected", True),
+                playlist_streams=_string_list_map(
+                    source_data, "playlist_streams"
+                ),
+                dvd_inspected=_optional_bool(
+                    source_data, "dvd_inspected", True
+                ),
                 dvd_title=_optional_str(source_data, "dvd_title", "1"),
             )
             if re.fullmatch(r"[1-9][0-9]?", settings.dvd_title) is None:
                 raise ValueError(f"invalid DVD title for {key}")
-            if settings.output_format not in VALID_OUTPUT_FORMATS or not 0 <= settings.minimum_minutes <= 600:
+            if (
+                settings.output_format not in VALID_OUTPUT_FORMATS
+                or not 0 <= settings.minimum_minutes <= 600
+            ):
                 raise ValueError(f"invalid source settings for {key}")
             if settings.profile_name not in loaded_profiles:
                 settings.profile_name = DEFAULT_PROFILE_NAME
@@ -465,6 +588,7 @@ class PreferencesStore:
     def _write(self) -> None:
         active_profile = self.active_profile
         gui_language = self.gui_language
+        legal_notice_seen = self.legal_notice_seen
         profiles = tuple(self.profiles.values())
         # Stored records are replaced, never mutated or exposed to callers.
         sources = self._sources.copy()
@@ -474,6 +598,7 @@ class PreferencesStore:
                 "version": 1,
                 "active_profile": active_profile,
                 "gui_language": gui_language,
+                "legal_notice_seen": legal_notice_seen,
                 "profiles": [
                     {
                         "name": profile.name,
@@ -484,7 +609,9 @@ class PreferencesStore:
                     }
                     for profile in profiles
                 ],
-                "sources": {key: asdict(value) for key, value in sources.items()},
+                "sources": {
+                    key: asdict(value) for key, value in sources.items()
+                },
             }
 
         if self.writer is not None:
@@ -521,7 +648,9 @@ def _validated_minutes(value: object) -> int:
         or isinstance(value, bool)
         or not 0 <= value <= 600
     ):
-        raise ValueError("Minimum playlist length must be an integer between 0 and 600.")
+        raise ValueError(
+            "Minimum playlist length must be an integer between 0 and 600."
+        )
     return value
 
 

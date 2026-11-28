@@ -15,6 +15,10 @@ This runs on Linux. Before starting, make sure you have:
 - **For automatic 3D detection:** FFprobe with Blu-ray protocol support.
 - **For automatic disc detection:** `7z` or `7zz`, plus `prlimit` from
   util-linux. Without these, choose DVD or Blu-ray yourself.
+- **For DVD title discovery:** `lsdvd`.
+- **For disc previews:** mpv with DVD or Blu-ray support.
+- **For Blu-ray playlist analysis:** `bluray_info`, plus `7z` for images
+  and optical devices.
 
 Linux's `/proc` filesystem also needs to be available for safe copying.
 Package names vary between distributions.
@@ -35,6 +39,9 @@ Keep the included `dvdvideo/` folder beside the scripts, then run:
 The Activity pane tells you what's happening and shows any errors.
 Existing output files won't be overwritten.
 
+On first launch the app shows a short legal notice. Use **Legalese
+Pleasantries** to read the full notice at any time.
+
 **Optical drives:** The app does not automatically detect when the tray is
 opened or the disc is changed, so the displayed selections may no longer
 match the disc. After opening the tray or changing discs, use **Drives >
@@ -54,8 +61,22 @@ disc again doesn't mean starting from scratch. You'll still need to choose
 where to save the copy.
 
 New lists start with nothing selected unless you have saved choices or your
-profile picks matching tracks. Use **Select All** or **Select All Tracks**
-when you want everything.
+profile picks matching tracks. Blu-ray Inspect always leaves playlists
+unselected for you to choose. Use **Select All** or **Select All Tracks** when
+you want everything.
+
+## Finding titles and playlists
+
+DVD title discovery offers advisory menu and possible commentary hints.
+Blu-ray Inspect ranks playlists using advisory 2D-oriented analysis and
+displays disc-authored labels when available. It does not trace BD-J menu
+routes or prove which playlist is the main feature. Dummy, top-menu and
+repeated playlists are hidden by default; enable **Show dummy, top menu, and
+repeated playlists** to reveal them.
+
+DVD discovery and Blu-ray Inspect exclude titles or playlists shorter than
+five minutes. If playlist analysis is unavailable, normal Inspect continues.
+Previews use mpv and its own track choices, not the copy selections.
 
 ## Copy several DVD titles
 
@@ -83,19 +104,14 @@ select the drive again or choose the media type manually.
 
 For regular 2D video, MKV is the usual choice. Blu-rays offer three options:
 
-- **Automatic:** uses MKV normally and keeps original M2TS when it detects
-  Blu-ray 3D video.
+- **Automatic:** uses MKV normally and selects M2TS when a sample contains
+  MVC video.
 - **MKV:** lets you choose which tracks to keep.
-- **Original M2TS:** keeps all tracks, including both views of a 3D movie.
-  You can't leave individual tracks out in this mode.
+- **M2TS:** copies the playlist output without track filtering.
 
-For now, 3D stays in M2TS while we wait for FFmpeg/mkvmerge to catch up with
-reliable Blu-ray 3D copying to MKV in this workflow. Choosing MKV yourself
-doesn't add 3D support.
-
-Automatic detection only checks a sample. If you know a playlist is 3D but
-it isn't detected, choose **Original M2TS** yourself. You'll need a player
-that supports Blu-ray 3D; full-movie 3D playback hasn't been verified here.
+Neither format is a verified 3D backup: the playlist reader may omit a
+separate MVC dependent view. Automatic detection checks only a sample, so a
+negative result does not establish that the playlist is 2D.
 
 ## Chapters come along too
 
@@ -106,8 +122,7 @@ playlists made from several clips.
 
 ## A few things worth knowing
 
-- The suggested main movie is a hint, not a promise. The longest playlist
-  can sometimes be a menu.
+- Suggested main features and disc labels are hints, not guarantees.
 - Protected Blu-rays may need a local AACS key database. If you have **lawfully
   obtained one**, you can place it at `~/.config/aacs/KEYDB.cfg` (or
   `~/.config/aacs/keydb.cfg`), or specify its path with `--keydb`. Keep it

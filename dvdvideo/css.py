@@ -35,8 +35,9 @@ def check_decrypted(data: bytes, sector: int) -> None:
                 and data[pos + 6] & 0x30
             ):
                 raise DecryptionError(
-                    f'DVD video remains CSS-scrambled at sector {sector + offset // 2048}; '
-                    'a raw reader cannot decrypt it, or libdvdcss could not obtain a valid title key'
+                    'DVD video remains CSS-scrambled at sector'
+                    f' {sector + offset // 2048}; a raw reader cannot decrypt'
+                    ' it, or libdvdcss could not obtain a valid title key'
                 )
             if not length:
                 break
