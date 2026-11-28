@@ -36,8 +36,12 @@ def _has_mvc(body: bytearray) -> bool:
     mvc_slice = False
     for match in re.finditer(rb"(?=\x00\x00\x01(.{4}))", body, re.DOTALL):
         unit = match[1]
-        subset_sps |= not unit[0] & 128 and unit[0] & 31 == 15 and unit[1] in (118, 128)
-        mvc_slice |= not unit[0] & 128 and unit[0] & 31 == 20 and not unit[1] & 128
+        subset_sps |= (
+            not unit[0] & 128 and unit[0] & 31 == 15 and unit[1] in (118, 128)
+        )
+        mvc_slice |= (
+            not unit[0] & 128 and unit[0] & 31 == 20 and not unit[1] & 128
+        )
         if subset_sps and mvc_slice:
             return True
     return False
@@ -56,21 +60,33 @@ def mvc_pids(data: bytes) -> list[int]:
     for offset in range(0, len(data) - 191, 192):
         packet = data[offset + 4:offset + 192]
         if packet[0] != 0x47:
-            raise ValueError("Blu-ray probe returned invalid M2TS packet alignment.")
+            raise ValueError(
+                "Blu-ray probe returned invalid M2TS packet alignment."
+            )
         if packet[1] & 0x80:
-            raise ValueError("Blu-ray probe returned a transport-error packet.")
+            raise ValueError(
+                "Blu-ray probe returned a transport-error packet."
+            )
         if packet[3] & 0xC0:
-            raise ValueError("Blu-ray probe returned a scrambled transport packet.")
+            raise ValueError(
+                "Blu-ray probe returned a scrambled transport packet."
+            )
         control = (packet[3] >> 4) & 3
         if control == 0:
-            raise ValueError("Blu-ray probe returned a reserved adaptation-field control.")
+            raise ValueError(
+                "Blu-ray probe returned a reserved adaptation-field control."
+            )
         pid = ((packet[1] & 31) << 8) | packet[2]
         if pid == 0x1FFF:
             continue
         start = 4 if control == 1 else 5 + packet[4]
         if control in (2, 3) and start > len(packet):
-            raise ValueError("Blu-ray probe returned an invalid adaptation field.")
-        discontinuity = control in (2, 3) and packet[4] > 0 and bool(packet[5] & 0x80)
+            raise ValueError(
+                "Blu-ray probe returned an invalid adaptation field."
+            )
+        discontinuity = (
+            control in (2, 3) and packet[4] > 0 and bool(packet[5] & 0x80)
+        )
         if discontinuity:
             completed = payloads.pop(pid, None)
             if completed is not None and _has_mvc(completed):
@@ -83,10 +99,15 @@ def mvc_pids(data: bytes) -> list[int]:
         counter = packet[3] & 15
         previous = previous_packets.get(pid)
         if previous is not None:
-            if counter == previous[0] and _duplicate_packet(packet, previous[1]):
+            if counter == previous[0] and _duplicate_packet(
+                packet, previous[1]
+            ):
                 continue
             if counter != (previous[0] + 1) % 16:
-                raise ValueError(f"Blu-ray probe returned a continuity-counter gap on PID 0x{pid:04x}.")
+                raise ValueError(
+                    "Blu-ray probe returned a continuity-counter gap on PID"
+                    f" 0x{pid:04x}."
+                )
         previous_packets[pid] = (counter, packet)
         body = packet[start:]
         if packet[1] & 64:
@@ -97,7 +118,10 @@ def mvc_pids(data: bytes) -> list[int]:
             header.extend(body)
             if len(header) < 4:
                 continue
-            if not header.startswith(b"\x00\x00\x01") or not 0xE0 <= header[3] <= 0xEF:
+            if (
+                not header.startswith(b"\x00\x00\x01")
+                or not 0xE0 <= header[3] <= 0xEF
+            ):
                 del headers[pid]
                 continue
             if len(header) < 9 or len(header) < 9 + header[8]:

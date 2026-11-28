@@ -17,12 +17,14 @@
 
 from __future__ import annotations
 
-import os
 import shutil
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from dvdvideo.dvd_menu_analysis import DvdMenuAnalysisError
+from dvdvideo.dvd_menu_analysis import run_analysis as analyze_dvd_menu
 from dvdvideo.gui_commands import (
     CommandInput,
     CommandPlan,
@@ -33,9 +35,12 @@ from dvdvideo.gui_commands import (
 )
 from dvdvideo.gui_listing import (
     Listing,
+    apply_dvd_navigation,
+    apply_playlist_analysis,
     parse_bluray_streams,
     parse_dvd_streams,
     parse_dvd_titles,
+    parse_playlist_analysis,
     parse_playlists,
 )
 from dvdvideo.gui_operations import (
@@ -53,8 +58,10 @@ from dvdvideo.gui_operations import (
 )
 from dvdvideo.gui_preferences import Profile, SourcePreferences
 from dvdvideo.gui_selection import SelectionCoordinator
-from dvdvideo.gui_support import ManagedProcess
+from dvdvideo.gui_support import ManagedProcess, absolute_path
 from dvdvideo.gui_translation import identity
+
+PLAYLIST_ANALYSIS_TIMEOUT = 60
 
 
 @dataclass(frozen=True)
@@ -88,8 +95,11 @@ class ListingHooks:
 class DialogHooks:
     show_disc_details: Callable[[str, str], None]
     present_m2ts_confirmation: Callable[[str], None]
-    present_verification_dialog: Callable[[str, bool, str, list[str], int], None]
+    present_verification_dialog: Callable[
+        [str, bool, str, list[str], int], None
+    ]
     present_copy_summary: Callable[[str, Callable[[bool], None]], None]
+    present_ambiguous_output: Callable[[str, str, Callable[[str], None]], None]
 
 
 @dataclass(frozen=True)
@@ -132,7 +142,9 @@ class PreparedDvdBatch:
     failures: tuple[str, ...]
 
 
-def dvd_batch_inputs_match(left: OperationInputs, right: OperationInputs) -> bool:
+def dvd_batch_inputs_match(
+    left: OperationInputs, right: OperationInputs
+) -> bool:
     return (
         left.script_path == right.script_path
         and left.source == right.source
@@ -156,7 +168,9 @@ class OperationController:
         self.pending_copy: object | None = None
         self.dvd_batch: PreparedDvdBatch | None = None
 
-    def preserve_batch_on_title_change(self, previous: OperationInputs) -> None:
+    def preserve_batch_on_title_change(
+        self, previous: OperationInputs
+    ) -> None:
         batch = self.dvd_batch
         current = self.hooks.get_inputs()
         if batch is None or not dvd_batch_inputs_match(batch.inputs, previous):
@@ -165,10 +179,16 @@ class OperationController:
         if dvd_batch_inputs_match(updated, current):
             self.dvd_batch = replace(batch, inputs=updated)
 
-    def selected_for_copy(self, inputs: OperationInputs | None = None) -> list[str]:
+    def selected_for_copy(
+        self, inputs: OperationInputs | None = None
+    ) -> list[str]:
         inputs = inputs or self.hooks.get_inputs()
         previous = inputs.preferences
-        if not inputs.is_bluray and previous is not None and previous.dvd_title != inputs.dvd_title:
+        if (
+            not inputs.is_bluray
+            and previous is not None
+            and previous.dvd_title != inputs.dvd_title
+        ):
             previous = None
         return self.selection.selection_state.selected_ids(
             previous,
@@ -185,11 +205,17 @@ class OperationController:
             previous, playlist, self.selection.playlist_streams[playlist],
         )
 
-    def playlist_format(self, playlist: str, inputs: OperationInputs | None = None) -> str:
+    def playlist_format(
+        self, playlist: str, inputs: OperationInputs | None = None
+    ) -> str:
         inputs = inputs or self.hooks.get_inputs()
         requested = inputs.output_format or "auto"
         if requested == "auto":
-            return "m2ts" if self.selection.playlist_mvc.get(playlist, False) else "mkv"
+            return (
+                "m2ts"
+                if self.selection.playlist_mvc.get(playlist, False)
+                else "mkv"
+            )
         return requested
 
     def command(self, inspect: bool = False) -> list[str] | None:
@@ -210,10 +236,13 @@ class OperationController:
                 output_format = self.playlist_format(identifier, inputs)
                 streams = (
                     tuple(self.streams_for_copy(identifier, inputs))
-                    if output_format != "m2ts" and identifier in self.selection.playlist_streams
+                    if output_format != "m2ts"
+                    and identifier in self.selection.playlist_streams
                     else None
                 )
-                playlists.append(PlaylistChoice(identifier, output_format, streams))
+                playlists.append(
+                    PlaylistChoice(identifier, output_format, streams)
+                )
                 if streams == ():
                     break
         request = CommandInput(
@@ -222,7 +251,7 @@ class OperationController:
             is_bluray=is_bluray,
             inspect=inspect,
             minimum_minutes=(
-                inputs.minimum_minutes if is_bluray and inspect else 2
+                max(5, inputs.minimum_minutes) if is_bluray and inspect else 5
             ),
             output=inputs.output_path if not inspect else "",
             output_format=(
@@ -243,7 +272,14 @@ class OperationController:
         inputs = self.hooks.get_inputs()
         selected = self.selected_for_copy(inputs)
         is_bluray = inputs.is_bluray
-        formats = {playlist: self.playlist_format(playlist, inputs) for playlist in selected} if is_bluray else {}
+        formats = (
+            {
+                playlist: self.playlist_format(playlist, inputs)
+                for playlist in selected
+            }
+            if is_bluray
+            else {}
+        )
         return OutputSpec(
             inputs.output_path or ("." if is_bluray else ""),
             is_bluray,
@@ -252,45 +288,96 @@ class OperationController:
             tuple(formats.items()),
         )
 
-    def discover_dvd_titles(self, on_listing: Callable[[Listing], None] | None = None) -> None:
+    def discover_dvd_titles(
+        self, on_listing: Callable[[Listing], None] | None = None
+    ) -> None:
         inputs = self.hooks.get_inputs()
-        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
-            self.hooks.runtime.log("Wait for the current operation before discovering DVD titles.")
+        if (
+            self.lifecycle.running
+            or inputs.detecting
+            or self.lifecycle.closing
+        ):
+            self.hooks.runtime.log(
+                "Wait for the current operation before discovering DVD titles."
+            )
             return
         if inputs.is_bluray or not inputs.source:
-            self.hooks.runtime.log("Choose a DVD source before discovering titles.")
+            self.hooks.runtime.log(
+                "Choose a DVD source before discovering titles."
+            )
             return
         tool = shutil.which("lsdvd")
         if tool is None:
-            self.hooks.runtime.log("DVD title discovery requires lsdvd; title 1 remains available.")
+            self.hooks.runtime.log(
+                "DVD title discovery requires lsdvd; title 1 remains"
+                " available."
+            )
             return
-        source = os.path.abspath(inputs.source)
-        if os.path.basename(os.path.normpath(source)).upper() == "VIDEO_TS":
-            source = os.path.dirname(os.path.normpath(source))
+        source = absolute_path(inputs.source)
+
+        def parse_listing(output: str) -> Listing:
+            listing = parse_dvd_titles(
+                output, translate=self.hooks.ui.translate
+            )
+            try:
+                operation = self.lifecycle.operation
+                if operation is None:
+                    raise RuntimeError(
+                        "DVD discovery has no active operation."
+                    )
+                analysis = analyze_dvd_menu(
+                    source, operation, self.hooks.runtime.log
+                )
+            except DvdMenuAnalysisError as error:
+                listing.warnings.append(
+                    f"DVD menu analysis unavailable: {error}"
+                )
+                return listing
+            return apply_dvd_navigation(
+                listing, analysis, translate=self.hooks.ui.translate,
+            )
+
         self.start(
-            [tool, "-Oj", "-acs", source], on_listing=on_listing or self.hooks.listing.load_dvd_titles,
-            listing_parser=lambda output: parse_dvd_titles(output, translate=self.hooks.ui.translate),
-            timeout=60, quiet_stdout=True,
+            [tool, "-Oj", "-acs", source],
+            on_listing=on_listing or self.hooks.listing.load_dvd_titles,
+            listing_parser=parse_listing,
+            timeout=60,
+            quiet_stdout=True,
+            dvd_title_discovery=True,
         )
 
     def prepare_dvd_batch(self, titles: tuple[str, ...]) -> None:
         inputs = self.hooks.get_inputs()
-        if self.lifecycle.running or self.lifecycle.closing or inputs.detecting:
-            self.hooks.runtime.log("Wait for the current operation before preparing a DVD batch.")
+        if (
+            self.lifecycle.running
+            or self.lifecycle.closing
+            or inputs.detecting
+        ):
+            self.hooks.runtime.log(
+                "Wait for the current operation before preparing a DVD batch."
+            )
         elif inputs.is_bluray or not inputs.source:
-            self.hooks.runtime.log("Choose a DVD source before preparing a DVD batch.")
+            self.hooks.runtime.log(
+                "Choose a DVD source before preparing a DVD batch."
+            )
         elif self.selection.requires_reinspection:
-            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+            self.hooks.runtime.log(
+                "Inspect the current disc again before using its selections."
+            )
         elif not titles:
             self.hooks.runtime.log("Select at least one DVD title.")
         elif inputs.profile is None:
-            self.hooks.runtime.log("A language profile is required for a DVD batch.")
+            self.hooks.runtime.log(
+                "A language profile is required for a DVD batch."
+            )
         else:
             self._start_dvd_batch(inputs, titles)
 
     def clear_dvd_batch(self) -> None:
         if self.lifecycle.running or self.lifecycle.closing:
-            self.hooks.runtime.log("Wait for the current operation before clearing the DVD batch.")
+            self.hooks.runtime.log(
+                "Wait for the current operation before clearing the DVD batch."
+            )
             return
         self.dvd_batch = None
         self.pending_copy = None
@@ -299,16 +386,24 @@ class OperationController:
         self.hooks.runtime.log("Prepared DVD batch cleared.")
 
     def _start_dvd_batch(
-        self, inputs: OperationInputs, titles: tuple[str, ...],
-        jobs: tuple[DvdBatchJob, ...] | None = None, failures: tuple[str, ...] = (),
-        *, review: bool = False,
+        self,
+        inputs: OperationInputs,
+        titles: tuple[str, ...],
+        jobs: tuple[DvdBatchJob, ...] | None = None,
+        failures: tuple[str, ...] = (),
+        *,
+        review: bool = False,
     ) -> None:
         current = self.hooks.get_inputs()
         if (
-            self.lifecycle.running or self.lifecycle.closing or current.detecting
+            self.lifecycle.running
+            or self.lifecycle.closing
+            or current.detecting
             or not dvd_batch_inputs_match(current, inputs)
         ):
-            self.hooks.runtime.log("DVD batch not started because the source or settings changed.")
+            self.hooks.runtime.log(
+                "DVD batch not started because the source or settings changed."
+            )
             return
         operation = self.lifecycle.begin()
         self.hooks.runtime.cancel_drive_scan()
@@ -319,15 +414,23 @@ class OperationController:
             "Preparing copy summary..." if review else "Copying DVD batch..."
         )
         request = OperationRequest(
-            command=(), script_path=inputs.script_path, source=inputs.source, is_bluray=False,
-            collect=False, output=OutputSpec(inputs.output_path, False, "", (), ()),
+            command=(),
+            script_path=inputs.script_path,
+            source=inputs.source,
+            is_bluray=False,
+            collect=False,
+            output=OutputSpec(inputs.output_path, False, "", (), ()),
             restored_source_settings=(
                 self.selection.restored_source is not None
                 and self.selection.restored_source.source == inputs.source
-                and (self.selection.restored_source.has_saved_settings
-                     or "selection" in self.selection.restored_source.edited)
+                and (
+                    self.selection.restored_source.has_saved_settings
+                    or "selection" in self.selection.restored_source.edited
+                )
             ),
-            known_device_source=self.hooks.runtime.is_known_device_source(inputs.source),
+            known_device_source=self.hooks.runtime.is_known_device_source(
+                inputs.source
+            ),
             language=inputs.language,
         )
 
@@ -335,28 +438,43 @@ class OperationController:
             self.hooks.runtime.dispatch_ui(action)
 
         hooks = OperationHooks(
-            log=self.hooks.runtime.log, queue_log=self.hooks.runtime.queue_log,
-            exclude_device=lambda path: dispatch(lambda: (
-                self.hooks.runtime.exclude_device_source(path)
-                if self.hooks.get_inputs().generation == inputs.generation else None
-            )),
-            confirm_non_device=lambda path: dispatch(lambda: (
-                self.hooks.runtime.confirm_non_device(path)
-                if self.hooks.get_inputs().generation == inputs.generation else None
-            )),
+            log=self.hooks.runtime.log,
+            queue_log=self.hooks.runtime.queue_log,
+            exclude_device=lambda path: dispatch(
+                lambda: (
+                    self.hooks.runtime.exclude_device_source(path)
+                    if self.hooks.get_inputs().generation == inputs.generation
+                    else None
+                )
+            ),
+            confirm_non_device=lambda path: dispatch(
+                lambda: (
+                    self.hooks.runtime.confirm_non_device(path)
+                    if self.hooks.get_inputs().generation == inputs.generation
+                    else None
+                )
+            ),
             preview_started=lambda: None,
             copy_started=lambda: None,
-            output_changed=lambda _path: None, translate=self.hooks.ui.translate,
+            output_changed=lambda _path: None,
+            translate=self.hooks.ui.translate,
             batch_title_started=lambda title, current, total: dispatch(
-                lambda: self.show_dvd_batch_status(operation, title, current, total)
+                lambda: self.show_dvd_batch_status(
+                    operation, title, current, total
+                )
             ),
         )
 
         def prepared(result: OperationResult) -> None:
             if not dvd_batch_inputs_match(self.hooks.get_inputs(), inputs):
-                self.hooks.runtime.log("DVD batch not started because the source or settings changed.")
+                self.hooks.runtime.log(
+                    "DVD batch not started because the source or settings"
+                    " changed."
+                )
                 return
-            self.dvd_batch = PreparedDvdBatch(inputs, result.batch_jobs, result.batch_failures)
+            self.dvd_batch = PreparedDvdBatch(
+                inputs, result.batch_jobs, result.batch_failures
+            )
             self.hooks.ui.set_dvd_batch_count(len(result.batch_jobs))
             self.hooks.ui.set_status("DVD batch prepared")
             self.hooks.runtime.log(
@@ -367,28 +485,47 @@ class OperationController:
         def present(result: OperationResult) -> None:
             batch = self.dvd_batch
             if (
-                batch is None or not dvd_batch_inputs_match(batch.inputs, inputs)
+                batch is None
+                or not dvd_batch_inputs_match(batch.inputs, inputs)
                 or not dvd_batch_inputs_match(self.hooks.get_inputs(), inputs)
             ):
-                self.hooks.runtime.log("DVD batch not started because the source or settings changed.")
+                self.hooks.runtime.log(
+                    "DVD batch not started because the source or settings"
+                    " changed."
+                )
                 return
             token = object()
             self.pending_copy = token
 
             def response(accepted: bool) -> None:
                 if self.pending_copy is not token:
-                    self.hooks.runtime.log("Ignored an outdated copy confirmation.")
+                    self.hooks.runtime.log(
+                        "Ignored an outdated copy confirmation."
+                    )
                     return
                 self.pending_copy = None
                 if not accepted:
                     self.hooks.ui.set_status("DVD batch prepared")
-                    self.hooks.runtime.log("Copy cancelled before extraction; the DVD batch was kept.")
+                    self.hooks.runtime.log(
+                        "Copy cancelled before extraction; the DVD batch was"
+                        " kept."
+                    )
                 elif self.selection.requires_reinspection:
-                    self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+                    self.hooks.runtime.log(
+                        "Inspect the current disc again before using its"
+                        " selections."
+                    )
                 elif self.dvd_batch is not batch:
-                    self.hooks.runtime.log("DVD batch changed; review its summary again.")
+                    self.hooks.runtime.log(
+                        "DVD batch changed; review its summary again."
+                    )
                 else:
-                    self._start_dvd_batch(inputs, titles, result.batch_jobs, result.batch_failures)
+                    self._start_dvd_batch(
+                        inputs,
+                        titles,
+                        result.batch_jobs,
+                        result.batch_failures,
+                    )
 
             self.hooks.ui.set_status("Awaiting copy confirmation")
             self.hooks.dialogs.present_copy_summary(result.output, response)
@@ -398,37 +535,69 @@ class OperationController:
             try:
                 if jobs is None:
                     assert inputs.profile is not None
-                    result = prepare_dvd_batch(request, titles, inputs.profile, operation, hooks)
+                    result = prepare_dvd_batch(
+                        request, titles, inputs.profile, operation, hooks
+                    )
                 elif review:
-                    result = review_dvd_batch(request, jobs, failures, operation, hooks)
+                    result = review_dvd_batch(
+                        request, jobs, failures, operation, hooks
+                    )
                 else:
-                    result = execute_dvd_batch(request, jobs, failures, operation, hooks)
+                    result = execute_dvd_batch(
+                        request, jobs, failures, operation, hooks
+                    )
             except Exception:  # noqa: BLE001 - report unexpected failures at the worker boundary
                 import traceback
-                self.hooks.runtime.log("Unexpected DVD batch error:\n" + traceback.format_exc().rstrip())
+                self.hooks.runtime.log(
+                    "Unexpected DVD batch error:\n"
+                    + traceback.format_exc().rstrip()
+                )
             finally:
                 def finished() -> None:
-                    if jobs is not None and not review and self.dvd_batch is not None:
+                    if (
+                        jobs is not None
+                        and not review
+                        and self.dvd_batch is not None
+                    ):
                         remaining = tuple(
-                            job for job in self.dvd_batch.jobs if job.title not in result.batch_completed
+                            job
+                            for job in self.dvd_batch.jobs
+                            if job.title not in result.batch_completed
                         )
                         if remaining:
-                            self.dvd_batch = PreparedDvdBatch(inputs, remaining, self.dvd_batch.failures)
+                            self.dvd_batch = PreparedDvdBatch(
+                                inputs, remaining, self.dvd_batch.failures
+                            )
                         else:
                             self.dvd_batch = None
                         self.hooks.ui.set_dvd_batch_count(len(remaining))
                     callback = prepared if jobs is None else present
                     self.finish_run(
-                        (lambda _text: callback(result)) if result.deliver_success else None,
-                        result.output, inputs.generation, inputs.source, False, result.status,
+                        (
+                            (lambda _text: callback(result))
+                            if result.deliver_success
+                            else None
+                        ),
+                        result.output,
+                        inputs.generation,
+                        inputs.source,
+                        False,
+                        result.status,
                         completed_copy=jobs is not None and not review,
-                        notification_kind="Copy" if jobs is not None and not review else None,
+                        notification_kind=(
+                            "Copy" if jobs is not None and not review else None
+                        ),
                     )
 
                 dispatch(finished)
 
         if not self.hooks.runtime.start_worker(worker):
-            self.finish_run(status="Failed", notification_kind="Copy" if jobs is not None and not review else None)
+            self.finish_run(
+                status="Failed",
+                notification_kind=(
+                    "Copy" if jobs is not None and not review else None
+                ),
+            )
 
     def show_dvd_batch_status(
         self, operation: ManagedProcess, title: str, current: int, total: int,
@@ -445,34 +614,99 @@ class OperationController:
     def inspect(self) -> None:
         inputs = self.hooks.get_inputs()
         if self.lifecycle.running or inputs.detecting:
-            self.hooks.runtime.log("Wait for the current operation before inspecting.")
+            self.hooks.runtime.log(
+                "Wait for the current operation before inspecting."
+            )
             return
         command = self.command(inspect=True)
         if command:
+            if inputs.is_bluray and inputs.minimum_minutes < 5:
+                self.hooks.runtime.log(
+                    "Inspect uses a five-minute minimum, overriding the lower"
+                    " saved or displayed cutoff. Saved settings are unchanged."
+                )
             requires_reinspection = self.selection.requires_reinspection
             try:
                 self.hooks.listing.clear_rows()
             finally:
                 self.selection.requires_reinspection = requires_reinspection
+
             def parser(output: str) -> Listing:
                 if inputs.is_bluray:
-                    return parse_playlists(output, translate=self.hooks.ui.translate)
+                    return parse_playlists(
+                        output, translate=self.hooks.ui.translate,
+                        minimum_minutes=max(5, inputs.minimum_minutes),
+                    )
                 return parse_dvd_streams(output)
 
             def loaded(listing: Listing) -> None:
-                self.hooks.listing.load_rows(listing)
-                if inputs.is_bluray and listing.longest_playlist is not None:
-                    self.inspect_playlist(listing.longest_playlist)
+                self.hooks.listing.load_rows(
+                    replace(
+                        listing,
+                        reset_playlist_selection=True,
+                        show_unselected=True,
+                    )
+                    if inputs.is_bluray
+                    else listing
+                )
 
-            self.start(command, on_listing=loaded, listing_parser=parser)
+            def prepare_analysis_parser(
+                output: str,
+            ) -> Callable[[str], Listing]:
+                analysis = parse_playlist_analysis(output)
+
+                def parse(output: str) -> Listing:
+                    listing = parse_playlists(
+                        output,
+                        translate=self.hooks.ui.translate,
+                        include_hints=False,
+                        minimum_minutes=max(5, inputs.minimum_minutes),
+                        playlist_ranks=analysis.ranks,
+                    )
+                    return apply_playlist_analysis(
+                        listing, analysis, translate=self.hooks.ui.translate
+                    )
+
+                return parse
+
+            if inputs.is_bluray:
+                self.start(
+                    command,
+                    on_listing=loaded,
+                    listing_parser=parser,
+                    analysis_command=[
+                        sys.executable,
+                        "-c",
+                        (
+                            "import sys; sys.path.insert(0, sys.argv.pop(1));"
+                            " from dvdvideo.bluray_disc_type import main;"
+                            " raise SystemExit(main())"
+                        ),
+                        str(Path(__file__).parent.parent),
+                        "--gui-analysis",
+                        "--",
+                        inputs.source,
+                    ],
+                    prepare_analysis_parser=prepare_analysis_parser,
+                )
+            else:
+                self.start(command, on_listing=loaded, listing_parser=parser)
 
     def preview_selected(self) -> None:
         inputs = self.hooks.get_inputs()
         if self.selection.requires_reinspection:
-            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+            self.hooks.runtime.log(
+                "Inspect the current disc again before using its selections."
+            )
             return
-        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
-            self.hooks.runtime.log("Wait for the current operation before previewing.")
+        if (
+            self.lifecycle.running
+            or inputs.detecting
+            or self.lifecycle.closing
+        ):
+            self.hooks.runtime.log(
+                "Wait for the current operation before previewing."
+            )
             return
         if not inputs.source:
             self.hooks.runtime.log("Choose a source first.")
@@ -481,7 +715,9 @@ class OperationController:
         if inputs.is_bluray:
             selected = self.selected_for_copy(inputs)
             if len(selected) != 1:
-                self.hooks.runtime.log("Select exactly one playlist to preview.")
+                self.hooks.runtime.log(
+                    "Select exactly one playlist to preview."
+                )
                 return
             playlist = selected[0]
         self.start([], preview=True, preview_playlist=playlist)
@@ -489,10 +725,18 @@ class OperationController:
     def inspect_disc_details(self) -> None:
         inputs = self.hooks.get_inputs()
         if self.selection.requires_reinspection:
-            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+            self.hooks.runtime.log(
+                "Inspect the current disc again before using its selections."
+            )
             return
-        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
-            self.hooks.runtime.log("Wait for the current operation before reading disc details.")
+        if (
+            self.lifecycle.running
+            or inputs.detecting
+            or self.lifecycle.closing
+        ):
+            self.hooks.runtime.log(
+                "Wait for the current operation before reading disc details."
+            )
             return
         source = inputs.source
         if not source:
@@ -503,23 +747,41 @@ class OperationController:
         if is_bluray:
             selected = self.selected_for_copy(inputs)
             if len(selected) > 1:
-                self.hooks.runtime.log("Select one playlist for detailed tracks, or none for a disc overview.")
+                self.hooks.runtime.log(
+                    "Select one playlist for detailed tracks, or none for a"
+                    " disc overview."
+                )
                 return
             playlist = selected[0] if selected else None
         command = build_disc_details_command(
-            inputs.script_path, source, is_bluray=is_bluray, playlist=playlist, dvd_title=inputs.dvd_title,
+            inputs.script_path,
+            source,
+            is_bluray=is_bluray,
+            playlist=playlist,
+            dvd_title=inputs.dvd_title,
         )
         self.start(
-            command, lambda output: self.hooks.dialogs.show_disc_details(output, source),
+            command,
+            lambda output: self.hooks.dialogs.show_disc_details(
+                output, source
+            ),
         )
 
     def copy_selected(self) -> None:
         inputs = self.hooks.get_inputs()
         if self.selection.requires_reinspection:
-            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+            self.hooks.runtime.log(
+                "Inspect the current disc again before using its selections."
+            )
             return
-        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
-            self.hooks.runtime.log("Wait for the current operation before copying.")
+        if (
+            self.lifecycle.running
+            or inputs.detecting
+            or self.lifecycle.closing
+        ):
+            self.hooks.runtime.log(
+                "Wait for the current operation before copying."
+            )
             return
         if not inputs.source:
             self.hooks.runtime.log("Choose a source first.")
@@ -528,12 +790,17 @@ class OperationController:
             batch = self.dvd_batch
             if not dvd_batch_inputs_match(inputs, batch.inputs):
                 self.hooks.runtime.log(
-                    "The prepared DVD batch no longer matches the source or settings. "
-                    "Prepare it again or clear the batch before copying."
+                    "The prepared DVD batch no longer matches the source or"
+                    " settings. Prepare it again or clear the batch before"
+                    " copying."
                 )
                 return
             self._start_dvd_batch(
-                inputs, tuple(job.title for job in batch.jobs), batch.jobs, batch.failures, review=True,
+                inputs,
+                tuple(job.title for job in batch.jobs),
+                batch.jobs,
+                batch.failures,
+                review=True,
             )
             return
         if inputs.is_bluray:
@@ -547,19 +814,30 @@ class OperationController:
                         inputs.script_path, inputs.source, playlist,
                     )
 
-                    def inspected(output: Listing, playlist: str = playlist) -> None:
-                        self.hooks.listing.load_stream_rows(playlist, output, None)
+                    def inspected(
+                        output: Listing, playlist: str = playlist
+                    ) -> None:
+                        self.hooks.listing.load_stream_rows(
+                            playlist, output, None
+                        )
                         if playlist in self.selection.playlist_mvc:
                             self.copy_selected()
 
                     self.start(
-                        command, on_listing=inspected, listing_parser=parse_bluray_streams,
+                        command,
+                        on_listing=inspected,
+                        listing_parser=parse_bluray_streams,
                     )
                     return
             for playlist in selected:
-                if self.playlist_format(playlist, inputs) == "m2ts" and playlist not in self.selection.m2ts_confirmed:
+                if (
+                    self.playlist_format(playlist, inputs) == "m2ts"
+                    and playlist not in self.selection.m2ts_confirmed
+                ):
                     saved = inputs.preferences
-                    if self.selection.requires_m2ts_confirmation(playlist, saved):
+                    if self.selection.requires_m2ts_confirmation(
+                        playlist, saved
+                    ):
                         self.hooks.dialogs.present_m2ts_confirmation(playlist)
                         return
                     self.selection.m2ts_confirmed.add(playlist)
@@ -576,48 +854,136 @@ class OperationController:
             token = object()
             self.pending_copy = token
 
-            def response(accepted: bool) -> None:
-                if self.pending_copy is not token:
-                    self.hooks.runtime.log("Ignored an outdated copy confirmation.")
-                    return
-                self.pending_copy = None
-                if not accepted:
-                    self.hooks.runtime.log("Copy cancelled before extraction; selections were kept.")
-                    return
-                current = self.hooks.get_inputs()
-                if (
-                    self.lifecycle.running or self.lifecycle.closing or current.detecting
-                    or current.generation != generation or current.source != inputs.source
-                    or current.is_bluray != inputs.is_bluray or self.selection.requires_reinspection
-                    or current.output_format != inputs.output_format
-                    or self.command() != command or self.output_snapshot() != output
-                    or self.copy_tracks_summary(current) != (tracks, warnings)
-                ):
-                    self.hooks.runtime.log("Copy not started because the source, settings, or operation changed. Review the summary again.")
-                    return
-                self.start(command, output_snapshot=output, output_argument_index=plan.output_index)
+            def present(
+                summary: str,
+                reviewed_path: str,
+                reviewed_directory: bool,
+                reviewed_identity: tuple[int, int],
+            ) -> None:
+                def response(accepted: bool) -> None:
+                    if self.pending_copy is not token:
+                        self.hooks.runtime.log(
+                            "Ignored an outdated copy confirmation."
+                        )
+                        return
+                    self.pending_copy = None
+                    if not accepted:
+                        self.hooks.runtime.log(
+                            "Copy cancelled before extraction; selections were"
+                            " kept."
+                        )
+                        return
+                    current = self.hooks.get_inputs()
+                    if (
+                        self.lifecycle.running
+                        or self.lifecycle.closing
+                        or current.detecting
+                        or current.generation != generation
+                        or current.source != inputs.source
+                        or current.is_bluray != inputs.is_bluray
+                        or self.selection.requires_reinspection
+                        or current.output_format != inputs.output_format
+                        or self.command() != command
+                        or self.output_snapshot() != output
+                        or self.copy_tracks_summary(current)
+                        != (tracks, warnings)
+                    ):
+                        self.hooks.runtime.log(
+                            "Copy not started because the source, settings, or"
+                            " operation changed. Review the summary again."
+                        )
+                        return
+                    reviewed = replace(
+                        output,
+                        reviewed_path=reviewed_path,
+                        reviewed_directory=reviewed_directory,
+                        reviewed_identity=reviewed_identity,
+                    )
+                    self.start(
+                        command,
+                        output_snapshot=reviewed,
+                        output_argument_index=plan.output_index,
+                    )
 
-            def present(summary: str) -> None:
                 self.hooks.ui.set_status("Awaiting copy confirmation")
                 for warning in warnings:
                     self.hooks.runtime.log(warning)
-                self.hooks.dialogs.present_copy_summary(summary + "\n\n" + tracks, response)
+                self.hooks.dialogs.present_copy_summary(
+                    summary + "\n\n" + tracks, response
+                )
+
+            def ambiguous(resolved: str) -> None:
+                def choose_file(choice: str) -> None:
+                    if self.pending_copy is not token:
+                        self.hooks.runtime.log(
+                            "Ignored an outdated output choice."
+                        )
+                        return
+                    self.pending_copy = None
+                    current = self.hooks.get_inputs()
+                    if (
+                        self.lifecycle.running
+                        or self.lifecycle.closing
+                        or current.detecting
+                        or current != inputs
+                        or self.selection.requires_reinspection
+                        or self.command() != command
+                        or self.output_snapshot() != output
+                        or self.copy_tracks_summary(current)
+                        != (tracks, warnings)
+                    ):
+                        self.hooks.runtime.log(
+                            "Output choice ignored because the source or"
+                            " settings changed."
+                        )
+                        return
+                    if choice == "cancel":
+                        return
+                    if choice == "directory":
+                        self.hooks.runtime.log(
+                            "Create or choose an existing output directory,"
+                            " then try copying again."
+                        )
+                        return
+                    if choice != "file":
+                        self.hooks.runtime.log(
+                            "Invalid output choice; copying was not started."
+                        )
+                        return
+                    self.hooks.ui.set_output_path(resolved)
+                    self.copy_selected()
+
+                self.hooks.dialogs.present_ambiguous_output(
+                    output.path, resolved, choose_file
+                )
 
             self.start(
-                command, on_success=present, output_snapshot=output, summary_only=True,
+                command,
+                output_snapshot=output,
+                summary_only=True,
+                on_copy_review=present,
                 output_argument_index=plan.output_index,
+                on_ambiguous_output=ambiguous,
             )
 
-    def copy_tracks_summary(self, inputs: OperationInputs) -> tuple[str, tuple[str, ...]]:
+    def copy_tracks_summary(
+        self, inputs: OperationInputs
+    ) -> tuple[str, tuple[str, ...]]:
         translate = self.hooks.ui.translate
         lines = [translate("Selected tracks")]
         warnings: list[str] = []
-        playlists = self.selected_for_copy(inputs) if inputs.is_bluray else [""]
+        playlists = (
+            self.selected_for_copy(inputs) if inputs.is_bluray else [""]
+        )
         for playlist in playlists:
             if inputs.is_bluray:
-                lines.append(translate("Playlist {playlist}:").format(playlist=playlist))
+                lines.append(
+                    translate("Playlist {playlist}:").format(playlist=playlist)
+                )
                 if self.playlist_format(playlist, inputs) == "m2ts":
-                    lines.append("  " + translate("All tracks (original M2TS; filtering is not applied)."))
+                    lines.append(
+                        "  " + translate("Unfiltered playlist output (M2TS).")
+                    )
                     continue
                 identifiers = (
                     self.streams_for_copy(playlist, inputs)
@@ -629,37 +995,66 @@ class OperationController:
                 tracks = self.selection.dvd_track_info
             by_id = {track.identifier: track for track in tracks}
             if identifiers is None:
-                lines.append("  " + translate("All source tracks (not individually inspected)."))
+                lines.append(
+                    "  "
+                    + translate(
+                        "All source tracks (not individually inspected)."
+                    )
+                )
             else:
                 for identifier in identifiers:
                     track = by_id.get(identifier)
                     detail = (
-                        f" - {track.kind}, {track.language or translate('language unspecified')}" if track else ""
+                        f" - {track.kind},"
+                        f" {(
+                            track.language or translate('language unspecified')
+                        )}"
+                        if track
+                        else ""
                     )
                     lines.append(f"  {identifier}{detail}")
-            selected_ids = set(identifiers) if identifiers is not None else set()
-            selected_tracks = [track for track in tracks if identifiers is None or track.identifier in selected_ids]
+            selected_ids: set[str] = (
+                set(identifiers) if identifiers is not None else set()
+            )
+            selected_tracks = [
+                track
+                for track in tracks
+                if identifiers is None or track.identifier in selected_ids
+            ]
             if any(track.kind == "audio" for track in selected_tracks):
                 continue
-            if identifiers is None or any(identifier not in by_id for identifier in identifiers):
+            if identifiers is None or any(
+                identifier not in by_id for identifier in identifiers
+            ):
                 warning = translate(
-                    "Warning: audio selection could not be determined; check whether the output includes audio."
+                    "Warning: audio selection could not be determined; check"
+                    " whether the output includes audio."
                 )
                 if inputs.is_bluray:
-                    warning = translate("Playlist {playlist}:").format(playlist=playlist) + " " + warning
+                    warning = (
+                        translate("Playlist {playlist}:").format(
+                            playlist=playlist
+                        )
+                        + " "
+                        + warning
+                    )
             elif inputs.is_bluray:
                 warning = translate(
-                    "Warning: no audio track was selected for playlist {playlist}; the output will have no audio."
+                    "Warning: no audio track was selected for playlist"
+                    " {playlist}; the output will have no audio."
                 ).format(playlist=playlist)
             else:
                 warning = translate(
-                    "Warning: no audio track was selected for DVD title {title}; the output will have no audio."
+                    "Warning: no audio track was selected for DVD title"
+                    " {title}; the output will have no audio."
                 ).format(title=inputs.dvd_title)
             lines.append(warning)
             warnings.append(warning)
         return "\n".join(lines), tuple(warnings)
 
-    def confirm_m2ts_response(self, playlist: str, generation: int, accepted: bool) -> None:
+    def confirm_m2ts_response(
+        self, playlist: str, generation: int, accepted: bool
+    ) -> None:
         inputs = self.hooks.get_inputs()
         if (
             generation != inputs.generation
@@ -671,40 +1066,62 @@ class OperationController:
             self.selection.m2ts_confirmed.add(playlist)
             self.copy_selected()
         else:
-            self.hooks.runtime.log("M2TS copy cancelled; filtered selection retained.")
+            self.hooks.runtime.log(
+                "M2TS copy cancelled; filtered selection retained."
+            )
 
     def inspect_streams(self) -> None:
         inputs = self.hooks.get_inputs()
         if self.selection.requires_reinspection:
             self.hooks.ui.log_inspect_action()
-            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+            self.hooks.runtime.log(
+                "Inspect the current disc again before using its selections."
+            )
             return
-        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
+        if (
+            self.lifecycle.running
+            or inputs.detecting
+            or self.lifecycle.closing
+        ):
             self.hooks.ui.log_inspect_action()
-            self.hooks.runtime.log("Wait for the current operation before inspecting streams.")
+            self.hooks.runtime.log(
+                "Wait for the current operation before inspecting streams."
+            )
             return
         selected = self.selected_for_copy(inputs)
         if len(selected) != 1:
             self.hooks.ui.log_inspect_action()
-            self.hooks.runtime.log("Select exactly one playlist to inspect its streams.")
+            self.hooks.runtime.log(
+                "Select exactly one playlist to inspect its streams."
+            )
             return
         self.inspect_playlist(selected[0])
 
     def inspect_playlist(self, playlist: str) -> None:
         inputs = self.hooks.get_inputs()
         if self.selection.requires_reinspection:
-            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+            self.hooks.runtime.log(
+                "Inspect the current disc again before using its selections."
+            )
             return
         self.hooks.ui.log_inspect_action()
-        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
-            self.hooks.runtime.log("Wait for the current operation before inspecting streams.")
+        if (
+            self.lifecycle.running
+            or inputs.detecting
+            or self.lifecycle.closing
+        ):
+            self.hooks.runtime.log(
+                "Wait for the current operation before inspecting streams."
+            )
             return
         source = inputs.source
         if not source:
             self.hooks.runtime.log("Choose a source first.")
             return
         if not inputs.is_bluray:
-            self.hooks.runtime.log("Choose a Blu-ray source before inspecting its tracks.")
+            self.hooks.runtime.log(
+                "Choose a Blu-ray source before inspecting its tracks."
+            )
             return
         saved = inputs.preferences
         previous = self.selection.begin_stream_inspection(playlist, saved)
@@ -715,25 +1132,41 @@ class OperationController:
         )
         self.start(
             command,
-            on_listing=lambda output: self.hooks.listing.load_stream_rows(playlist, output, previous),
+            on_listing=lambda output: self.hooks.listing.load_stream_rows(
+                playlist, output, previous
+            ),
             listing_parser=parse_bluray_streams,
         )
 
     def show_verify_dialog(self) -> None:
         inputs = self.hooks.get_inputs()
         if self.selection.requires_reinspection:
-            self.hooks.runtime.log("Inspect the current disc again before using its selections.")
+            self.hooks.runtime.log(
+                "Inspect the current disc again before using its selections."
+            )
             return
-        if self.lifecycle.running or inputs.detecting or self.lifecycle.closing:
-            self.hooks.runtime.log("Wait for the current operation before verifying a copy.")
+        if (
+            self.lifecycle.running
+            or inputs.detecting
+            or self.lifecycle.closing
+        ):
+            self.hooks.runtime.log(
+                "Wait for the current operation before verifying a copy."
+            )
             return
         source = inputs.source
         if not source:
-            self.hooks.runtime.log("Choose the original source before verifying a copy.")
+            self.hooks.runtime.log(
+                "Choose the original source before verifying a copy."
+            )
             return
         is_bluray = inputs.is_bluray
         selected = self.selected_for_copy(inputs)
-        title = selected[0] if is_bluray and len(selected) == 1 else inputs.dvd_title if not is_bluray else ""
+        title = (
+            selected[0]
+            if is_bluray and len(selected) == 1
+            else inputs.dvd_title if not is_bluray else ""
+        )
         streams = (
             self.streams_for_copy(title, inputs)
             if is_bluray and title in self.selection.playlist_streams
@@ -758,12 +1191,17 @@ class OperationController:
         if not accepted:
             return True
         if (
-            self.lifecycle.closing or self.lifecycle.running or inputs.detecting
+            self.lifecycle.closing
+            or self.lifecycle.running
+            or inputs.detecting
             or generation != inputs.generation
             or is_bluray != inputs.is_bluray
             or self.selection.requires_reinspection
         ):
-            self.hooks.runtime.log("Verification not started because the source or operation changed.")
+            self.hooks.runtime.log(
+                "Verification not started because the source or operation"
+                " changed."
+            )
         elif not copy_path:
             self.hooks.runtime.log("Choose an existing copy to verify.")
             return False
@@ -771,7 +1209,11 @@ class OperationController:
             values = [value.strip() for value in streams_text.split(",")]
             streams = [] if values == [""] else values
             verification = VerificationSpec(
-                source, Path(copy_path), is_bluray, title.strip(), tuple(streams),
+                source,
+                Path(copy_path),
+                is_bluray,
+                title.strip(),
+                tuple(streams),
             )
             self.start(
                 [inputs.script_path], verification=verification,
@@ -793,20 +1235,37 @@ class OperationController:
         timeout: float | None = None,
         quiet_stdout: bool = False,
         output_argument_index: int | None = None,
+        dvd_title_discovery: bool = False,
+        analysis_command: list[str] | None = None,
+        prepare_analysis_parser: (
+            Callable[[str], Callable[[str], Listing]] | None
+        ) = None,
+        on_ambiguous_output: Callable[[str], None] | None = None,
+        on_copy_review: (
+            Callable[[str, str, bool, tuple[int, int]], None] | None
+        ) = None,
     ) -> None:
         inputs = self.hooks.get_inputs()
         if self.lifecycle.closing:
             return
         if inputs.detecting:
-            self.hooks.runtime.log("Detecting media type; wait a moment or choose DVD/Blu-ray manually.")
+            self.hooks.runtime.log(
+                "Detecting media type; wait a moment or choose DVD/Blu-ray"
+                " manually."
+            )
             return
         if self.lifecycle.running:
             self.hooks.runtime.log("An operation is already running.")
             return
         operation = self.lifecycle.begin()
         notification_kind = (
-            "Verification" if verification is not None else
-            "Copy" if output_snapshot is not None and not summary_only else None
+            "Verification"
+            if verification is not None
+            else (
+                "Copy"
+                if output_snapshot is not None and not summary_only
+                else None
+            )
         )
         self.hooks.runtime.cancel_drive_scan()
         self.hooks.ui.invalidate_choosers()
@@ -815,9 +1274,25 @@ class OperationController:
         is_bluray = inputs.is_bluray
         self.hooks.ui.set_busy(True)
         self.hooks.ui.set_status(
-            "Preparing copy summary..." if summary_only else
-            "Verifying copy..." if verification else "Preparing preview..." if preview else
-            "Validating output..." if output_snapshot else "Inspecting..." if on_success or on_listing else "Copying..."
+            "Preparing copy summary..."
+            if summary_only
+            else (
+                "Verifying copy..."
+                if verification
+                else (
+                    "Preparing preview..."
+                    if preview
+                    else (
+                        "Validating output..."
+                        if output_snapshot
+                        else (
+                            "Inspecting..."
+                            if on_success or on_listing
+                            else "Copying..."
+                        )
+                    )
+                )
+            )
         )
         request = OperationRequest(
             command=tuple(command),
@@ -838,13 +1313,16 @@ class OperationController:
                     or "selection" in self.selection.restored_source.edited
                 )
             ),
-            known_device_source=self.hooks.runtime.is_known_device_source(source),
+            known_device_source=(
+                self.hooks.runtime.is_known_device_source(source)
+            ),
             summary_only=summary_only,
             dvd_title=inputs.dvd_title,
             timeout=timeout,
             quiet_stdout=quiet_stdout,
             language=inputs.language,
             output_argument_index=output_argument_index,
+            dvd_title_discovery=dvd_title_discovery,
         )
 
         def dispatch(action: Callable[[], object]) -> None:
@@ -853,40 +1331,123 @@ class OperationController:
         hooks = OperationHooks(
             log=self.hooks.runtime.log,
             queue_log=self.hooks.runtime.queue_log,
-            exclude_device=lambda path: dispatch(lambda: (
-                self.hooks.runtime.exclude_device_source(path)
-                if self.hooks.get_inputs().generation == generation else None
-            )),
-            confirm_non_device=lambda path: dispatch(lambda: (
-                self.hooks.runtime.confirm_non_device(path)
-                if self.hooks.get_inputs().generation == generation else None
-            )),
-            preview_started=lambda: dispatch(lambda: self.show_preview_status(operation)),
-            copy_started=lambda: dispatch(lambda: self.show_copying_status(operation)),
-            output_changed=lambda path: dispatch(lambda: self.update_output_path(operation, path)),
+            exclude_device=lambda path: dispatch(
+                lambda: (
+                    self.hooks.runtime.exclude_device_source(path)
+                    if self.hooks.get_inputs().generation == generation
+                    else None
+                )
+            ),
+            confirm_non_device=lambda path: dispatch(
+                lambda: (
+                    self.hooks.runtime.confirm_non_device(path)
+                    if self.hooks.get_inputs().generation == generation
+                    else None
+                )
+            ),
+            preview_started=lambda: dispatch(
+                lambda: self.show_preview_status(operation)
+            ),
+            copy_started=lambda: dispatch(
+                lambda: self.show_copying_status(operation)
+            ),
+            output_changed=lambda path: dispatch(
+                lambda: self.update_output_path(operation, path)
+            ),
             translate=self.hooks.ui.translate,
         )
 
         def worker() -> None:
             result = OperationResult("Failed")
+            analysis_cancelled = False
+            inspection_request = request
             try:
-                result = execute_operation(request, operation, hooks)
+                if analysis_command is not None:
+                    hooks.log("Analyzing playlists before Inspect...")
+                    analysis_result = execute_operation(
+                        replace(
+                            request,
+                            command=tuple(analysis_command),
+                            listing_parser=None,
+                            collect=True,
+                            quiet_stdout=True,
+                            timeout=PLAYLIST_ANALYSIS_TIMEOUT,
+                        ),
+                        operation,
+                        hooks,
+                    )
+                    if (
+                        analysis_result.status == "Completed"
+                        and analysis_result.deliver_success
+                    ):
+                        try:
+                            if prepare_analysis_parser is None:
+                                raise ValueError(
+                                    "No playlist analysis parser was provided."
+                                )
+                            inspection_request = replace(
+                                request,
+                                listing_parser=prepare_analysis_parser(
+                                    analysis_result.output
+                                ),
+                            )
+                        except (TypeError, ValueError) as error:
+                            hooks.log(
+                                "Playlist analysis could not be read:"
+                                f" {error}; continuing with Inspect."
+                            )
+                        else:
+                            hooks.log(
+                                "Playlist analysis completed; Inspect will"
+                                " order similar groups by rank. Rankings,"
+                                " navigation grades and disc labels are"
+                                " unverified; preview before copying."
+                            )
+                    elif (
+                        analysis_result.status != "Cancelled"
+                        and not operation.cancelled.is_set()
+                    ):
+                        hooks.log(
+                            "Playlist analysis unavailable; continuing with"
+                            " Inspect."
+                        )
+                    analysis_cancelled = analysis_result.status == "Cancelled"
+                if operation.cancelled.is_set() or analysis_cancelled:
+                    result = OperationResult("Cancelled")
+                else:
+                    result = execute_operation(
+                        inspection_request, operation, hooks
+                    )
             finally:
-                dispatch(lambda: self.finish_run(
-                    on_success if result.deliver_success else None,
-                    result.output,
-                    generation,
-                    source,
-                    is_bluray,
-                    result.status,
-                    result.listing,
-                    output_snapshot is not None and not summary_only,
-                    on_listing=on_listing if result.deliver_success else None,
-                    notification_kind=notification_kind,
-                ))
+                dispatch(
+                    lambda: self.finish_run(
+                        on_success if result.deliver_success else None,
+                        result.output,
+                        generation,
+                        source,
+                        is_bluray,
+                        result.status,
+                        result.listing,
+                        output_snapshot is not None and not summary_only,
+                        on_listing=(
+                            on_listing if result.deliver_success else None
+                        ),
+                        notification_kind=notification_kind,
+                        ambiguous_output=result.ambiguous_output,
+                        on_ambiguous_output=on_ambiguous_output,
+                        reviewed_path=result.reviewed_path,
+                        reviewed_directory=result.reviewed_directory,
+                        reviewed_identity=result.reviewed_identity,
+                        on_copy_review=(
+                            on_copy_review if result.deliver_success else None
+                        ),
+                    )
+                )
 
         if not self.hooks.runtime.start_worker(worker):
-            self.finish_run(status="Failed", notification_kind=notification_kind)
+            self.finish_run(
+                status="Failed", notification_kind=notification_kind
+            )
 
     def show_copying_status(self, operation: ManagedProcess) -> None:
         if (
@@ -905,9 +1466,14 @@ class OperationController:
             self.hooks.ui.set_status("Previewing...")
 
     def update_output_path(self, operation: ManagedProcess, path: str) -> None:
-        if self.lifecycle.operation is operation and not self.lifecycle.closing:
+        if (
+            self.lifecycle.operation is operation
+            and not self.lifecycle.closing
+        ):
             self.hooks.ui.set_output_path(path)
-            self.hooks.runtime.log(f"Output format changed filename to: {path}")
+            self.hooks.runtime.log(
+                f"Output format changed filename to: {path}"
+            )
 
     def finish_run(
         self,
@@ -922,16 +1488,35 @@ class OperationController:
         *,
         on_listing: Callable[[Listing], None] | None = None,
         notification_kind: str | None = None,
+        ambiguous_output: str | None = None,
+        on_ambiguous_output: Callable[[str], None] | None = None,
+        reviewed_path: str | None = None,
+        reviewed_directory: bool | None = None,
+        reviewed_identity: tuple[int, int] | None = None,
+        on_copy_review: (
+            Callable[[str, str, bool, tuple[int, int]], None] | None
+        ) = None,
     ) -> None:
         inputs = self.hooks.get_inputs()
-        if self.lifecycle.operation is not None and self.lifecycle.operation.cancelled.is_set():
+        if (
+            self.lifecycle.operation is not None
+            and self.lifecycle.operation.cancelled.is_set()
+        ):
             if status == "Completed" and completed_copy:
-                self.hooks.runtime.log("Cancellation arrived after the copy completed; published output was retained.")
+                self.hooks.runtime.log(
+                    "Cancellation arrived after the copy completed; published"
+                    " output was retained."
+                )
             elif status in ("Completed", "Verified"):
-                self.hooks.runtime.log("Cancellation received after subprocess completion; ignored pending results.")
+                self.hooks.runtime.log(
+                    "Cancellation received after subprocess completion;"
+                    " ignored pending results."
+                )
                 status = "Cancelled"
             on_success = None
             on_listing = None
+            ambiguous_output = None
+            on_copy_review = None
         self.lifecycle.finish()
         self.hooks.ui.set_busy(False)
         self.hooks.ui.set_status(status)
@@ -942,12 +1527,42 @@ class OperationController:
             or source != inputs.source
             or is_bluray != inputs.is_bluray
         ):
-            self.hooks.runtime.log("Ignored stale operation results because the source or media mode changed.")
+            self.hooks.runtime.log(
+                "Ignored stale operation results because the source or media"
+                " mode changed."
+            )
             return
-        if notification_kind is not None and status in ("Completed", "Verified", "Failed"):
+        if notification_kind is not None and status in (
+            "Completed",
+            "Verified",
+            "Failed",
+        ):
             self.hooks.ui.notify_completion(notification_kind, status)
         if status == "Verified":
             self.hooks.runtime.log(output.rstrip())
+        if ambiguous_output is not None:
+            if on_ambiguous_output is None:
+                self.hooks.runtime.log("Cannot resolve ambiguous output path.")
+            else:
+                on_ambiguous_output(ambiguous_output)
+            return
+        if on_copy_review is not None:
+            if (
+                reviewed_path is None
+                or reviewed_directory is None
+                or reviewed_identity is None
+            ):
+                self.hooks.runtime.log(
+                    "Copy summary did not contain a valid destination."
+                )
+            else:
+                on_copy_review(
+                    output,
+                    reviewed_path,
+                    reviewed_directory,
+                    reviewed_identity,
+                )
+            return
         if on_listing is not None and listing is not None:
             on_listing(listing)
         if on_success is not None:

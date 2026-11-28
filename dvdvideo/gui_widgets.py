@@ -8,25 +8,35 @@ from typing import ClassVar
 
 import gi
 
+# GTK's version must be selected before GTK-dependent imports.
+# ruff: noqa: E402
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 
-from gi.repository import Gdk, GObject, Gtk  # type: ignore[reportMissingModuleSource]
+from gi.repository import (
+    Gdk,  # type: ignore[reportMissingModuleSource]
+    GObject,  # type: ignore[reportMissingModuleSource]
+    Gtk,  # type: ignore[reportMissingModuleSource]
+)
 
 from dvdvideo.gui_translation import identity
 
 
 class Choice(Gtk.DropDown):
-    """A drop-down with stable identifiers separate from its displayed labels."""
+    """A drop-down with stable identifiers separate from displayed labels."""
 
-    __gsignals__: ClassVar[dict[str, tuple[GObject.SignalFlags, None, tuple[type, ...]]]] = {
+    __gsignals__: ClassVar[
+        dict[str, tuple[GObject.SignalFlags, None, tuple[type, ...]]]
+    ] = {
         "changed": (GObject.SignalFlags.RUN_LAST, None, ()),
     }
 
-    def __init__(self, *, allow_none: bool = True) -> None:
-        # Gtk.DropDown cannot deselect a nonempty model; row zero represents no selection.
+    def __init__(
+        self, *, allow_none: bool = True, none_label: str = ""
+    ) -> None:
+        # Gtk.DropDown cannot deselect a nonempty model; row zero means none.
         self._offset = 1 if allow_none else 0
-        self._labels = Gtk.StringList.new([""] if allow_none else [])
+        self._labels = Gtk.StringList.new([none_label] if allow_none else [])
         self._ids: list[str] = []
         super().__init__(model=self._labels)
         self.connect("notify::selected", lambda *_args: self.emit("changed"))
@@ -39,11 +49,15 @@ class Choice(Gtk.DropDown):
         if self._offset:
             self.set_selected(0)
         self._ids.clear()
-        self._labels.splice(self._offset, self._labels.get_n_items() - self._offset, [])
+        self._labels.splice(
+            self._offset, self._labels.get_n_items() - self._offset, []
+        )
 
     def set_active_id(self, identifier: str | None) -> None:
-        index = self._ids.index(identifier) + self._offset if identifier in self._ids else (
-            0 if self._offset else Gtk.INVALID_LIST_POSITION
+        index = (
+            self._ids.index(identifier) + self._offset
+            if identifier in self._ids
+            else (0 if self._offset else Gtk.INVALID_LIST_POSITION)
         )
         self.set_selected(index)
 
@@ -54,12 +68,21 @@ class Choice(Gtk.DropDown):
 
 
 class ResponseWindow(Gtk.Window):
-    __gsignals__: ClassVar[dict[str, tuple[GObject.SignalFlags, None, tuple[type, ...]]]] = {
+    __gsignals__: ClassVar[
+        dict[str, tuple[GObject.SignalFlags, None, tuple[type, ...]]]
+    ] = {
         "response": (GObject.SignalFlags.RUN_LAST, None, (int,)),
     }
 
-    def __init__(self, *, title: str, transient_for: Gtk.Window, modal: bool = True) -> None:
-        super().__init__(title=title, transient_for=transient_for, modal=modal, destroy_with_parent=True)
+    def __init__(
+        self, *, title: str, transient_for: Gtk.Window, modal: bool = True
+    ) -> None:
+        super().__init__(
+            title=title,
+            transient_for=transient_for,
+            modal=modal,
+            destroy_with_parent=True,
+        )
         self._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END)
         self._buttons.set_margin_top(12)
@@ -79,13 +102,21 @@ class ResponseWindow(Gtk.Window):
         self.response(Gtk.ResponseType.CANCEL)
         return True
 
-    def _key_pressed(self, _controller: Gtk.EventControllerKey, keyval: int, _keycode: int, _state: Gdk.ModifierType) -> bool:
+    def _key_pressed(
+        self,
+        _controller: Gtk.EventControllerKey,
+        keyval: int,
+        _keycode: int,
+        _state: Gdk.ModifierType,
+    ) -> bool:
         if keyval == Gdk.KEY_Escape:
             self.response(Gtk.ResponseType.CANCEL)
             return True
         return False
 
-    def add_button(self, label: str, response: int, *, tooltip: str, default: bool = False) -> Gtk.Button:
+    def add_button(
+        self, label: str, response: int, *, tooltip: str, default: bool = False
+    ) -> Gtk.Button:
         button = Gtk.Button(label=label, tooltip_text=tooltip)
         button.connect("clicked", lambda *_args: self.response(response))
         self._buttons.append(button)
@@ -107,15 +138,22 @@ def add_field_label(row: Gtk.Box, text: str, widget: Gtk.Widget) -> None:
 
 
 def add_path_row(
-    parent: Gtk.Box, label: str, placeholder: str, callback: Callable[..., object],
-    *, tooltip: str, translate: Callable[[str], str] = identity,
+    parent: Gtk.Box,
+    label: str,
+    placeholder: str,
+    callback: Callable[..., object],
+    *,
+    tooltip: str,
+    translate: Callable[[str], str] = identity,
 ) -> Gtk.Entry:
     row = Gtk.Box(spacing=8)
     entry = Gtk.Entry(hexpand=True, placeholder_text=placeholder)
     entry.set_activates_default(True)
     add_field_label(row, translate(f"_{label}"), entry)
     row.append(entry)
-    button = Gtk.Button(label=translate("Browse"), tooltip_text=translate(tooltip))
+    button = Gtk.Button(
+        label=translate("Browse"), tooltip_text=translate(tooltip)
+    )
     button.connect("clicked", callback)
     row.append(button)
     parent.append(row)

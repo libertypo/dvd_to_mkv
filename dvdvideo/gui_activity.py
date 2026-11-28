@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import math
 import re
 import threading
 import time
@@ -22,10 +23,15 @@ from collections import deque
 
 MAX_PENDING_CHARS = 256 * 1024
 MAX_FLUSH_CHARS = 16 * 1024
-# GTK lays out each line as a whole; unbroken output would grow memory without bound.
+# GTK lays out each line as a whole; unbroken output would grow memory
+# without bound.
 MAX_LOG_LINE_CHARS = 1024
-# C0/C1 controls (except tab and newline) and bidirectional overrides can disguise external text.
-UNSAFE_TEXT = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ud800-\udfff]")
+# C0/C1 controls (except tab and newline) and bidirectional overrides can
+# disguise external text.
+UNSAFE_TEXT = re.compile(
+    "[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e"
+    "\u2066-\u2069\ud800-\udfff]"
+)
 MEDIA_TIME = r"(\d{1,6}):([0-5]\d):([0-5]\d(?:\.\d+)?)"
 DURATION = re.compile(r"^\s*Duration: " + MEDIA_TIME)
 POSITION = re.compile(r"\btime=" + MEDIA_TIME)
@@ -42,7 +48,7 @@ def media_seconds(match: re.Match[str]) -> float:
 
 
 class MediaProgress:
-    """Track FFmpeg or Blu-ray extraction, not an invented overall percentage."""
+    """Track FFmpeg or Blu-ray extraction, not invented overall progress."""
 
     def __init__(self) -> None:
         self.pending = ""
@@ -60,10 +66,9 @@ class MediaProgress:
                 continue
             line = self.pending.strip()
             self.pending = ""
-            if (
-                line.startswith(("Input #0,", "Comparing ", "Retrying ", "Copying DVD title "))
-                or BLURAY_PHASE.match(line)
-            ):
+            if line.startswith(
+                ("Input #0,", "Comparing ", "Retrying ", "Copying DVD title ")
+            ) or BLURAY_PHASE.match(line):
                 self.duration = self.position = self.speed = None
                 self.started = time.monotonic()
                 self.bluray = False
@@ -71,7 +76,9 @@ class MediaProgress:
                 position = float(match.group(1))
                 if position > 100:
                     continue
-                if not self.bluray or (self.position is not None and position < self.position):
+                if not self.bluray or (
+                    self.position is not None and position < self.position
+                ):
                     self.started = time.monotonic()
                     self.baseline = position
                 self.bluray = True
@@ -81,7 +88,9 @@ class MediaProgress:
             elif match := DURATION.match(line):
                 if self.duration is None:
                     self.duration = media_seconds(match) or None
-            elif line.startswith(("frame=", "size=")) and (match := POSITION.search(line)):
+            elif line.startswith(("frame=", "size=")) and (
+                match := POSITION.search(line)
+            ):
                 self.position = media_seconds(match)
                 speed = SPEED.search(line)
                 self.speed = float(speed.group(1)) if speed else None
@@ -95,8 +104,18 @@ class MediaProgress:
         speed = self.speed
         elapsed = time.monotonic() - self.started
         if speed is None and elapsed >= 1:
-            speed = (self.position - self.baseline if self.bluray else self.position) / elapsed
-        eta = round(max(0, self.duration - self.position) / speed) if speed and speed > 0 else None
+            speed = (
+                self.position - self.baseline if self.bluray else self.position
+            ) / elapsed
+        remaining = (
+            max(0, self.duration - self.position) / speed
+            if speed and speed > 0 and math.isfinite(speed) else None
+        )
+        eta = (
+            round(remaining)
+            if remaining is not None and math.isfinite(remaining)
+            else None
+        )
         return fraction, eta
 
 
@@ -123,7 +142,11 @@ class ActivityBuffer:
 
     def progress(self) -> tuple[float, int | None] | None:
         with self._lock:
-            return self._progress.snapshot() if self._progress is not None else None
+            return (
+                self._progress.snapshot()
+                if self._progress is not None
+                else None
+            )
 
     def _break_long_lines(self, text: str) -> str:
         pieces: list[str] = []

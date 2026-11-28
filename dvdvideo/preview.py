@@ -1,4 +1,4 @@
-"""Build direct-disc FFplay previews without copying or temporary video files."""
+"""Build direct-disc mpv previews without copying or temporary video files."""
 
 # @copyright: 2026 libertypo <libertypo@proton.me>
 # @license: GNU GPL-3
@@ -23,77 +23,100 @@ import subprocess
 from collections.abc import Callable
 
 from dvdvideo.gui_commands import validate_dvd_title
-from dvdvideo.gui_support import ManagedProcess
+from dvdvideo.gui_support import (
+    ManagedProcess,
+    absolute_path,
+    strip_directory_suffix,
+)
 
 
 def preview_command(
-    source: str, *, is_bluray: bool, playlist: str | None, operation: ManagedProcess,
+    source: str,
+    *,
+    is_bluray: bool,
+    playlist: str | None,
+    operation: ManagedProcess,
     dvd_title: str = "1",
 ) -> list[str]:
     operation.check_cancelled()
     if not source:
         raise RuntimeError("Choose a source first.")
-    player = shutil.which("ffplay")
+    player = shutil.which("mpv")
     if player is None:
-        raise RuntimeError("Preview requires FFplay. Install it to use Preview; copying doesn't need it.")
-    if is_bluray and (playlist is None or re.fullmatch(r"[0-9]{1,5}", playlist) is None):
-        raise RuntimeError("Select exactly one valid Blu-ray playlist to preview.")
-    path = os.path.abspath(source)
+        raise RuntimeError(
+            "Preview requires mpv. Install it to use Preview; copying doesn't"
+            " need it."
+        )
+    if is_bluray and (
+        playlist is None or re.fullmatch(r"[0-9]{1,5}", playlist) is None
+    ):
+        raise RuntimeError(
+            "Select exactly one valid Blu-ray playlist to preview."
+        )
+    path = absolute_path(source)
     info = os.stat(path)
-    if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode) or stat.S_ISBLK(info.st_mode)):
-        raise RuntimeError("Preview source must be a disc image, device, or disc folder.")
+    if not (
+        stat.S_ISREG(info.st_mode)
+        or stat.S_ISDIR(info.st_mode)
+        or stat.S_ISBLK(info.st_mode)
+    ):
+        raise RuntimeError(
+            "Preview source must be a disc image, device, or disc folder."
+        )
     if stat.S_ISDIR(info.st_mode):
+        path = strip_directory_suffix(path)
         folder = os.path.basename(path).upper()
         if is_bluray and folder == "BDMV":
             path = os.path.dirname(path)
         elif not is_bluray and folder != "VIDEO_TS":
             matches = [
-                os.path.join(path, entry) for entry in os.listdir(path)
-                if entry.upper() == "VIDEO_TS" and os.path.isdir(os.path.join(path, entry))
+                os.path.join(path, entry)
+                for entry in os.listdir(path)
+                if entry.upper() == "VIDEO_TS"
+                and os.path.isdir(os.path.join(path, entry))
             ]
             if len(matches) != 1:
-                raise RuntimeError("DVD preview requires exactly one VIDEO_TS folder.")
+                raise RuntimeError(
+                    "DVD preview requires exactly one VIDEO_TS folder."
+                )
             path = matches[0]
-    capability = "-protocols" if is_bluray else "-demuxers"
-    result = operation.run([player, "-hide_banner", capability], timeout=10)
+    result = operation.run(
+        [player, "--no-config", "--list-protocols"], timeout=10
+    )
     if result.returncode != 0:
         detail = result.stderr.strip() or f"exit status {result.returncode}"
-        raise RuntimeError(f"Could not check FFplay support: {detail}")
-    supported = (
-        "bluray" in result.stdout.split()
-        if is_bluray else re.search(r"^\s*D\s+dvdvideo\b", result.stdout, re.MULTILINE) is not None
-    )
-    if not supported:
-        feature = "Blu-ray protocol" if is_bluray else "dvdvideo input format"
-        raise RuntimeError(f"This FFplay build lacks the {feature} required for preview.")
+        raise RuntimeError(f"Could not check mpv support: {detail}")
+    protocol = "bd://" if is_bluray else "dvd://"
+    if protocol not in result.stdout.split():
+        feature = "Blu-ray" if is_bluray else "DVD"
+        raise RuntimeError(
+            f"This mpv build lacks the {feature} support required for preview."
+        )
     operation.check_cancelled()
     command = [
-        player, "-hide_banner", "-loglevel", "level+warning", "-nostats", "-autoexit",
-        "-window_title", "Disc preview (2D)",
+        player, "--no-config", "--load-scripts=no", "--ytdl=no",
+        "--resume-playback=no", "--save-position-on-quit=no", "--disc-menu=no",
+        "--idle=no", "--keep-open=no", "--input-terminal=no", "--terminal=yes",
+        "--msg-level=all=warn", "--title=Disc preview (2D)",
     ]
     if is_bluray:
         assert playlist is not None
-        command += ["-playlist", str(int(playlist)), "-i", "bluray:" + path]
+        command += [
+            "--bluray-device=" + path, "--", f"bd://mpls/{int(playlist)}"
+        ]
     else:
-        command += ["-f", "dvdvideo", "-title", validate_dvd_title(dvd_title), "-i", path]
+        # mpv's DVD title indices start at zero, unlike the copy backend.
+        title_index = int(validate_dvd_title(dvd_title)) - 1
+        command += ["--dvd-device=" + path, "--", f"dvd://{title_index}"]
     return command
 
 
 def play_preview(
-    command: list[str], *, operation: ManagedProcess, log: Callable[[str], None],
+    command: list[str],
+    *,
+    operation: ManagedProcess,
+    log: Callable[[str], None],
 ) -> subprocess.CompletedProcess[str]:
-    reported_error = False
-    tail = ""
-
-    def output(text: str) -> None:
-        nonlocal reported_error, tail
-        # FFplay can exit zero after an input/decoder failure; tags also span pipe reads.
-        combined = tail + text
-        reported_error = reported_error or "[error]" in combined or "[fatal]" in combined
-        tail = combined[-8:]
-        log(text)
-
-    result = operation.run(command, collect=False, log=output, abandon_unresponsive=True)
-    if reported_error:
-        raise RuntimeError("FFplay reported a playback error; see Activity above.")
-    return result
+    return operation.run(
+        command, collect=False, log=log, abandon_unresponsive=True
+    )

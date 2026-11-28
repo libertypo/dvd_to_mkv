@@ -21,7 +21,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from dvdvideo.gui_preferences import PreferencesStore, reusable_source
-from dvdvideo.gui_source_workflow import SourceWorkflow, detect_source, scan_drives
+from dvdvideo.gui_source_workflow import (
+    SourceWorkflow,
+    detect_source,
+    scan_drives,
+)
 from dvdvideo.gui_support import ManagedProcess
 from dvdvideo.optical_drives import OpticalDrive
 
@@ -54,9 +58,13 @@ class SourceRuntimeHooks:
     schedule_detection: Callable[[str, int], int]
     remove_timeout: Callable[[int], object]
     start_worker: Callable[[Callable[[], None]], bool]
-    dispatch_detection: Callable[[str, int, str | None, str | None, bool | None], object]
+    dispatch_detection: Callable[
+        [str, int, str | None, str | None, bool | None], object
+    ]
     dispatch_exclude_device: Callable[[str, int], object]
-    dispatch_drive_scan: Callable[[ManagedProcess, list[OpticalDrive], str | None], object]
+    dispatch_drive_scan: Callable[
+        [ManagedProcess, list[OpticalDrive], str | None], object
+    ]
     dispatch_detection_done: Callable[[ManagedProcess], object]
 
 
@@ -69,7 +77,10 @@ class SourceControllerHooks:
 
 
 class SourceController:
-    def __init__(self, workflow: SourceWorkflow, hooks: SourceControllerHooks) -> None:
+
+    def __init__(
+        self, workflow: SourceWorkflow, hooks: SourceControllerHooks
+    ) -> None:
         self.workflow = workflow
         self.hooks = hooks
 
@@ -87,25 +98,51 @@ class SourceController:
         self.workflow.detecting = True
         self.hooks.ui.update_title_sensitivity()
         self.hooks.ui.set_status("Detecting media type...")
-        self.workflow.schedule_detection(source, self.hooks.runtime.schedule_detection)
+        self.workflow.schedule_detection(
+            source, self.hooks.runtime.schedule_detection
+        )
 
     def cancel_detection(self) -> None:
         self.workflow.cancel_detection(self.hooks.runtime.remove_timeout)
         self.hooks.ui.update_title_sensitivity()
 
+    def resume_detection(self, source: str, generation: int) -> None:
+        if (
+            self.workflow.is_current(
+                source,
+                generation,
+                self.hooks.ui.get_source(),
+                closing=self.hooks.runtime.is_closing(),
+            )
+            and not self.workflow.detecting
+        ):
+            self._schedule_detection(source)
+
     def start_detection(self, source: str, generation: int) -> bool:
-        if self.hooks.runtime.is_closing() or generation != self.workflow.detection_generation:
+        if (
+            self.hooks.runtime.is_closing()
+            or generation != self.workflow.detection_generation
+        ):
             return False
         probe = self.workflow.begin_detection(
-            source, generation, self.hooks.ui.get_source(), closing=self.hooks.runtime.is_closing(),
+            source,
+            generation,
+            self.hooks.ui.get_source(),
+            closing=self.hooks.runtime.is_closing(),
         )
         if probe is None:
             return False
 
         def deliver(
-            path: str, token: int, media: str | None, error: str | None, device: bool | None,
+            path: str,
+            token: int,
+            media: str | None,
+            error: str | None,
+            device: bool | None,
         ) -> None:
-            self.hooks.runtime.dispatch_detection(path, token, media, error, device)
+            self.hooks.runtime.dispatch_detection(
+                path, token, media, error, device
+            )
 
         def exclude_device(path: str) -> None:
             self.hooks.runtime.dispatch_exclude_device(path, generation)
@@ -113,16 +150,24 @@ class SourceController:
         def worker() -> None:
             try:
                 detect_source(
-                    source, generation, probe, deliver=deliver,
-                    exclude_device=exclude_device, log=self.hooks.log, isolate=True,
+                    source,
+                    generation,
+                    probe,
+                    deliver=deliver,
+                    exclude_device=exclude_device,
+                    log=self.hooks.log,
+                    isolate=True,
                 )
             finally:
                 self.hooks.runtime.dispatch_detection_done(probe)
 
         if not self.hooks.runtime.start_worker(worker):
             self.finish_detection(
-                source, generation, None,
-                "Could not start background worker. See Activity for details.", None,
+                source,
+                generation,
+                None,
+                "Could not start background worker. See Activity for details.",
+                None,
             )
             self.detection_finished(probe)
         return False
@@ -132,40 +177,65 @@ class SourceController:
         if pending is not None:
             self.start_detection(*pending)
 
-    def exclude_device_source(self, source: str, generation: int | None = None) -> None:
+    def exclude_device_source(
+        self, source: str, generation: int | None = None
+    ) -> None:
         if (
-            self.hooks.runtime.is_closing() or source != self.hooks.ui.get_source()
-            or generation is not None and generation != self.workflow.detection_generation
+            self.hooks.runtime.is_closing()
+            or source != self.hooks.ui.get_source()
+            or generation is not None
+            and generation != self.workflow.detection_generation
         ):
             return
         self.workflow.device_sources.add(PreferencesStore.source_key(source))
         self.hooks.ui.exclude_device(source)
         if reusable_source(source):
-            self.hooks.log(f"Block device {source}: saved disc selections will not be restored.")
+            self.hooks.log(
+                f"Block device {source}: saved disc selections will not be"
+                " restored."
+            )
 
-    def confirm_non_device_source(self, source: str, generation: int | None = None) -> None:
+    def confirm_non_device_source(
+        self, source: str, generation: int | None = None
+    ) -> None:
         if (
-            self.hooks.runtime.is_closing() or source != self.hooks.ui.get_source()
-            or generation is not None and generation != self.workflow.detection_generation
+            self.hooks.runtime.is_closing()
+            or source != self.hooks.ui.get_source()
+            or generation is not None
+            and generation != self.workflow.detection_generation
         ):
             return
         self.hooks.ui.confirm_non_device(source)
-        self.workflow.device_sources.discard(PreferencesStore.source_key(source))
+        self.workflow.device_sources.discard(
+            PreferencesStore.source_key(source)
+        )
 
     def finish_detection(
-        self, source: str, generation: int, media: str | None, error: str | None,
+        self,
+        source: str,
+        generation: int,
+        media: str | None,
+        error: str | None,
         device: bool | None,
     ) -> None:
-        if self.hooks.runtime.is_closing() or generation != self.workflow.detection_generation:
+        if (
+            self.hooks.runtime.is_closing()
+            or generation != self.workflow.detection_generation
+        ):
             return
         if not self.workflow.finish_detection(
-            source, generation, self.hooks.ui.get_source(), closing=self.hooks.runtime.is_closing(),
+            source,
+            generation,
+            self.hooks.ui.get_source(),
+            closing=self.hooks.runtime.is_closing(),
         ):
             return
         self.hooks.ui.update_title_sensitivity()
         if error:
             self.hooks.log(f"Media detection failed: {error}")
-            self.hooks.ui.set_status("Detection failed - select DVD or Blu-ray manually")
+            self.hooks.ui.set_status(
+                "Detection failed - select DVD or Blu-ray manually"
+            )
             return
         if device is False:
             self.confirm_non_device_source(source, generation)
@@ -178,7 +248,17 @@ class SourceController:
             self.hooks.ui.set_status("Detected Blu-ray")
         else:
             self.hooks.ui.set_status("Detected DVD")
-        self.hooks.log(f"Detected {'Blu-ray' if media == 'bluray' else 'DVD'} source.")
+        self.hooks.log(
+            f"Detected {'Blu-ray' if media == 'bluray' else 'DVD'} source."
+        )
+
+    def resume_drive_scan(self) -> None:
+        if self.hooks.runtime.is_closing() or self.hooks.runtime.is_running():
+            return
+        if self.workflow.drive_scan is not None:
+            self.workflow.drive_scan_restart = True
+        else:
+            self.scan_drives()
 
     def scan_drives(self) -> None:
         if (
@@ -199,18 +279,40 @@ class SourceController:
             drives: list[OpticalDrive] = []
             error = None
             try:
-                drives, error = scan_drives(operation, isolate=True, log=self.hooks.log)
+                drives, error = scan_drives(
+                    operation, isolate=True, log=self.hooks.log
+                )
             finally:
-                self.hooks.runtime.dispatch_drive_scan(operation, drives, error)
+                self.hooks.runtime.dispatch_drive_scan(
+                    operation, drives, error
+                )
 
         if not self.hooks.runtime.start_worker(worker):
-            self.finish_drive_scan(operation, [], "Could not start drive discovery.")
+            self.finish_drive_scan(
+                operation, [], "Could not start drive discovery."
+            )
 
     def finish_drive_scan(
-        self, operation: ManagedProcess, drives: list[OpticalDrive], error: str | None,
+        self,
+        operation: ManagedProcess,
+        drives: list[OpticalDrive],
+        error: str | None,
     ) -> None:
-        discarded = self.workflow.drive_scan is operation and self.workflow.drive_scan_discarded
-        if not self.workflow.finish_drive_scan(operation, closing=self.hooks.runtime.is_closing()):
+        discarded = (
+            self.workflow.drive_scan is operation
+            and self.workflow.drive_scan_discarded
+        )
+        restart = (
+            self.workflow.drive_scan is operation
+            and self.workflow.drive_scan_restart
+        )
+        completed = self.workflow.finish_drive_scan(
+            operation, closing=self.hooks.runtime.is_closing()
+        )
+        if restart:
+            self.scan_drives()
+            return
+        if not completed:
             if discarded and not self.hooks.runtime.is_closing():
                 self.hooks.drives.render_drives([], False, None)
             return
@@ -222,14 +324,21 @@ class SourceController:
         self.hooks.drives.render_drives(drives, False, error)
 
     def select_drive(self, drive: OpticalDrive) -> None:
-        if self.hooks.runtime.is_closing() or self.hooks.runtime.is_running() or drive.media is None:
+        if (
+            self.hooks.runtime.is_closing()
+            or self.hooks.runtime.is_running()
+            or drive.media is None
+        ):
             return
         self.hooks.drives.close_drive_menu()
         if self.hooks.ui.get_source() == drive.path:
             self.source_changed(drive.path)
         else:
             self.hooks.ui.set_source(drive.path)
-        self.hooks.log(f"Selected optical drive {drive.path}. Refresh drives after changing discs.")
+        self.hooks.log(
+            f"Selected optical drive {drive.path}. Refresh drives after"
+            " changing discs."
+        )
 
     def apply_chosen_file(
         self,
@@ -242,7 +351,10 @@ class SourceController:
             self.hooks.runtime.is_running() or self.hooks.runtime.is_closing()
             or generation != self.workflow.chooser_generation
         ):
-            self.hooks.log("Ignored file selection because the source or operation changed.")
+            self.hooks.log(
+                "Ignored file selection because the source or operation"
+                " changed."
+            )
             return
         if not has_selection:
             self.hooks.log("File chooser did not return a selection.")
@@ -251,10 +363,13 @@ class SourceController:
                 path.encode("utf-8")
             except UnicodeEncodeError:
                 self.hooks.log(
-                    "The selected path is not valid UTF-8 and cannot be displayed. "
-                    "Rename the file or folder to use a UTF-8 name, then select it again."
+                    "The selected path is not valid UTF-8 and cannot be"
+                    " displayed. Rename the file or folder to use a UTF-8"
+                    " name, then select it again."
                 )
-                self.hooks.ui.set_status("File selection failed - see Activity")
+                self.hooks.ui.set_status(
+                    "File selection failed - see Activity"
+                )
                 return
             set_path(path)
         else:

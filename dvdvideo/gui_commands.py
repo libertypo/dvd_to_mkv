@@ -32,7 +32,7 @@ class CommandInput:
     source: str
     is_bluray: bool
     inspect: bool = False
-    minimum_minutes: int = 2
+    minimum_minutes: int = 5
     output: str = ""
     output_format: str = "auto"
     selected: tuple[str, ...] = ()
@@ -56,7 +56,9 @@ def _source_argument(source: str) -> str:
     return "./" + source if source.startswith("-") else source
 
 
-def build_bluray_streams_command(script_path: str, source: str, playlist: str) -> list[str]:
+def build_bluray_streams_command(
+    script_path: str, source: str, playlist: str
+) -> list[str]:
     if not source:
         raise ValueError("Choose a source first.")
     return [
@@ -66,17 +68,32 @@ def build_bluray_streams_command(script_path: str, source: str, playlist: str) -
 
 
 def build_disc_details_command(
-    script_path: str, source: str, *, is_bluray: bool, playlist: str | None = None,
+    script_path: str,
+    source: str,
+    *,
+    is_bluray: bool,
+    playlist: str | None = None,
     dvd_title: str = "1",
 ) -> list[str]:
     if not source:
         raise ValueError("Choose a source first.")
     if is_bluray:
-        command = [script_path, "--bluray", "--device", _source_argument(source)]
+        command = [
+            script_path,
+            "--bluray",
+            "--device",
+            _source_argument(source),
+        ]
         if playlist is not None:
             command += ["--playlist", playlist]
         return command + ["--disc-details"]
-    return [script_path, "--disc-details", "--", source, validate_dvd_title(dvd_title)]
+    return [
+        script_path,
+        "--disc-details",
+        "--",
+        source,
+        validate_dvd_title(dvd_title),
+    ]
 
 
 def prepare_command(request: CommandInput) -> CommandPlan:
@@ -86,7 +103,16 @@ def prepare_command(request: CommandInput) -> CommandPlan:
     if request.is_bluray:
         command = [request.script_path, "--bluray", "--device", source]
         if request.inspect:
-            return CommandPlan(tuple(command + ["--minlength", str(request.minimum_minutes), "--list-playlists"]))
+            return CommandPlan(
+                tuple(
+                    command
+                    + [
+                        "--minlength",
+                        str(request.minimum_minutes),
+                        "--list-playlists",
+                    ]
+                )
+            )
         if not request.playlists:
             raise ValueError("Select at least one playlist.")
         for playlist in request.playlists:
@@ -94,15 +120,22 @@ def prepare_command(request: CommandInput) -> CommandPlan:
             if playlist.output_format == "m2ts" or playlist.streams is None:
                 continue
             if not playlist.streams:
-                raise ValueError(f"Select at least one stream for playlist {playlist.identifier}.")
+                raise ValueError(
+                    "Select at least one stream for playlist"
+                    f" {playlist.identifier}."
+                )
             for stream in playlist.streams:
                 command += ["--stream-id", f"{playlist.identifier}:{stream}"]
         command += ["--output-format", request.output_format, "--"]
         output_index = len(command)
-        return CommandPlan(tuple(command + [request.output or "."]), output_index)
+        return CommandPlan(
+            tuple(command + [request.output or "."]), output_index
+        )
     if request.inspect:
         title = validate_dvd_title(request.dvd_title)
-        return CommandPlan((request.script_path, "--list-streams-tsv", "--", source, title))
+        return CommandPlan(
+            (request.script_path, "--list-streams-tsv", "--", source, title)
+        )
     if not request.selected:
         raise ValueError("Select at least one stream.")
     if not request.output:

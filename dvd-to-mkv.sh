@@ -60,7 +60,8 @@ Playlist listings include a "# disc-name" metadata line when a disc name or UDF 
 3D discs include compatibility warnings; 3D stream inspection also requires
 FFprobe with Blu-ray support, bluray_copy, and python3.
 Use --output-format auto|mkv|m2ts for Blu-ray (default: auto).
-Auto preserves all streams as M2TS when MVC payload is verified in a playlist sample.
+Auto selects M2TS when MVC payload is detected in a playlist sample.
+Neither MKV nor M2TS output is guaranteed to preserve a separate 3D dependent view.
 If the Blu-ray reader cannot report the disc's 3D status, choose a format explicitly.
 M2TS output does not support --stream-id filtering and requires a .m2ts filename or directory.
 Blu-ray MKV copies embed the original playlist chapters. Original M2TS copies export
@@ -112,8 +113,9 @@ output_format=auto
 output_format_set=false
 declare -A playlist_formats=()
 declare -A playlist_names=()
-warning_3d='3D content reported by disc. Auto output uses original M2TS only when playlist MVC payload is verified; original M2TS preserves all streams.'
-minlength=2
+declare -A gui_reviewed_formats=()
+warning_3d='3D content reported by disc. MKV and M2TS copies may omit the dependent view; 3D preservation is not verified.'
+minlength=5
 minlength_set=false
 retries=0
 retries_set=false
@@ -125,6 +127,8 @@ workspace_parent=
 publication_pending=false
 dvd_output_committed=false
 gui_dvd_batch=false
+gui_output_mode=
+gui_reviewed_directory=
 dvd_batch_cancelled_after_publication=false
 pending_output=
 pending_chapter_sidecar=
@@ -140,7 +144,7 @@ active_process_group=
 copy_launching=false
 copy_cancel_status=0
 readonly MAX_ARGUMENT_FILE_BYTES=$((16 * 1024 * 1024))
-readonly MAX_ARGUMENT_FILE_ARGUMENTS=225000
+readonly MAX_ARGUMENT_FILE_ARGUMENTS=425000
 readonly MAX_INSPECTION_BYTES=$((16 * 1024 * 1024))
 if ! IFS= read -r -d '' script_path < <(readlink -fz -- "$0") \
     || ! IFS= read -r -d '' module_directory < <(dirname -z -- "$script_path"); then
@@ -435,7 +439,7 @@ sys.exit(not all(type(stream["index"]) is int for stream in streams))
 
 pin_output_directory() {
     local output_directory=$1
-    local owner mode
+    local owner mode identity
 
     # Pin the directory before checking it: ancestor renames/symlink swaps must
     # not redirect subsequent writes or rollback to another directory.
@@ -444,6 +448,12 @@ pin_output_directory() {
         exit 1
     fi
     workspace_parent=/proc/$$/fd/$workspace_parent_fd
+    if [[ -n $gui_reviewed_directory ]]; then
+        if ! identity=$(stat -Lc '%d:%i' -- "$workspace_parent") || [[ $identity != "$gui_reviewed_directory" ]]; then
+            echo 'The output directory changed after the copy summary; review it again.' >&2
+            exit 1
+        fi
+    fi
     if [[ ! -d $workspace_parent ]] \
         || ! read -r owner mode < <(stat -Lc '%u %a' -- "$workspace_parent") \
         || [[ $owner != "$EUID" && $owner != 0 ]] \
@@ -699,6 +709,35 @@ while [[ $# -gt 0 ]]; do
             gui_dvd_batch=true
             shift
             ;;
+        --gui-output-mode)
+            if [[ $# -lt 2 || ! $2 =~ ^(file|directory)$ || -n $gui_output_mode ]]; then
+                echo '--gui-output-mode requires file or directory once.' >&2
+                exit 2
+            fi
+            gui_output_mode=$2
+            shift 2
+            ;;
+        --gui-reviewed-directory)
+            if [[ $# -lt 2 || ! $2 =~ ^[0-9]+:[0-9]+$ || -n $gui_reviewed_directory ]]; then
+                echo '--gui-reviewed-directory requires one device:inode identity.' >&2
+                exit 2
+            fi
+            gui_reviewed_directory=$2
+            shift 2
+            ;;
+        --gui-reviewed-format)
+            if [[ $# -lt 2 || ! $2 =~ ^([0-9]{1,5}):(mkv|m2ts)$ ]]; then
+                echo '--gui-reviewed-format requires a playlist ID and mkv or m2ts.' >&2
+                exit 2
+            fi
+            id=$((10#${BASH_REMATCH[1]}))
+            if [[ -v "gui_reviewed_formats[$id]" ]]; then
+                echo "Duplicate reviewed format for playlist $id." >&2
+                exit 2
+            fi
+            gui_reviewed_formats[$id]=${BASH_REMATCH[2]}
+            shift 2
+            ;;
         --list-streams)
             list_streams=true
             shift
@@ -873,6 +912,19 @@ done
 if [[ $gui_dvd_batch == true && ($media_type != dvd || $list_titles == true || $list_streams == true || $disc_details == true || $list_playlists == true) ]]; then
     echo '--gui-dvd-batch is only supported for DVD copying.' >&2
     exit 2
+fi
+if (( ${#gui_reviewed_formats[@]} )); then
+    if [[ $media_type != bluray || -z $gui_output_mode || $list_titles == true || $list_streams == true || $disc_details == true || $list_playlists == true ]] \
+        || (( ${#gui_reviewed_formats[@]} != ${#selected_playlists[@]} )); then
+        echo 'Reviewed formats require exactly one entry per selected Blu-ray playlist.' >&2
+        exit 2
+    fi
+    for id in "${selected_playlists[@]}"; do
+        if [[ ! -v "gui_reviewed_formats[$id]" ]]; then
+            echo "Missing reviewed format for playlist $id." >&2
+            exit 2
+        fi
+    done
 fi
 
 if [[ $list_titles == true && ($media_type == bluray || $list_streams == true || $list_playlists == true || $disc_details == true || ${#selected_streams[@]} -ne 0 || $retries_set == true || $# -ne 1) ]]; then
@@ -1219,10 +1271,18 @@ if [[ $media_type == bluray ]]; then
     if [[ $output_path == -* ]]; then
         output_path=./$output_path
     fi
-    if [[ -d $output_path ]]; then
+    if [[ $gui_output_mode == directory || ( -z $gui_output_mode && -d $output_path ) ]]; then
+        if [[ ! -d $output_path ]]; then
+            echo 'The reviewed output directory no longer exists; review the copy summary again.' >&2
+            exit 1
+        fi
         output_directory=$output_path
         output_file=
     elif [[ ${#selected_playlists[@]} -eq 1 ]]; then
+        if [[ $gui_output_mode == file && -d $output_path ]]; then
+            echo 'The reviewed output filename is now a directory; review the copy summary again.' >&2
+            exit 1
+        fi
         if [[ $output_path == */ ]]; then
             echo "Blu-ray output file must not end with '/': $output_path" >&2
             exit 2
@@ -1272,6 +1332,7 @@ if [[ $media_type == bluray ]]; then
         echo 'Safe cancellation of Blu-ray copy commands requires setsid.' >&2
         exit 1
     fi
+    echo 'Warning: MKV and M2TS copies may omit a 3D dependent view; 3D preservation is not verified.' >&2
     for playlist in "${selected_playlists[@]}"; do
         format=$output_format
         if [[ $format == auto ]]; then
@@ -1303,11 +1364,15 @@ if [[ $media_type == bluray ]]; then
                 probe_mvc "$playlist"
                 if [[ -n $inspection_output ]]; then
                     format=m2ts
-                    echo "Playlist $playlist: verified MVC payload; preserving all streams as M2TS." >&2
+                    echo "Playlist $playlist: verified MVC payload in sample; using unfiltered M2TS output." >&2
                 else
                     echo "Playlist $playlist: MVC not verified in sample; retaining MKV output." >&2
                 fi
             fi
+        fi
+        if [[ -v "gui_reviewed_formats[$playlist]" && ${gui_reviewed_formats[$playlist]} != "$format" ]]; then
+            printf 'Playlist %s: automatic output format changed after review; review the copy again.\n' "$playlist" >&2
+            exit 1
         fi
         playlist_formats[$playlist]=$format
         if [[ -v "playlist_names[$playlist]" && ${playlist_names[$playlist],,} != *."$format" ]]; then
@@ -1317,7 +1382,7 @@ if [[ $media_type == bluray ]]; then
         if [[ $format == m2ts ]]; then
             for selection in "${selected_stream_ids[@]}"; do
                 if [[ ${selection%%:*} == "$playlist" ]]; then
-                    echo "Playlist $playlist: original M2TS preserves all streams; remove --stream-id selections." >&2
+                    echo "Playlist $playlist: M2TS does not support stream filtering; remove --stream-id selections." >&2
                     exit 2
                 fi
             done

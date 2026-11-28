@@ -44,6 +44,10 @@ from dvdvideo.output_space import required_bytes, source_bytes
 from dvdvideo.preview import preview_command
 
 PREFLIGHT_TIMEOUT = 15
+SOURCE_UNPINNED_WARNING = (
+    "Warning: The source is not pinned and may change or be replaced. "
+    "Use a source protected from changes and keep the same disc inserted."
+)
 
 
 @dataclass(frozen=True)
@@ -55,51 +59,119 @@ class OperationPreflight:
     output_error: str | None = None
     source_classified: bool = False
     copy_summary: str | None = None
+    ambiguous_output: bool = False
+    source_is_directory: bool = False
+    reviewed_identity: tuple[int, int] | None = None
 
 
 def copy_summary(
-    source: str, script: str, output: str, name: str, playlists: list[str],
-    formats: dict[str, str], directory: bool, bluray: bool, operation: ManagedProcess,
+    source: str,
+    script: str,
+    output: str,
+    name: str,
+    playlists: list[str],
+    formats: dict[str, str],
+    directory: bool,
+    bluray: bool,
+    operation: ManagedProcess,
     dvd_title: str = "1",
-    *, translate: Callable[[str], str] = identity,
+    *,
+    translate: Callable[[str], str] = identity,
+    directory_fd: int | None = None,
 ) -> str:
-    lines = [translate("Source: {path}").format(path=os.path.abspath(source)), ""]
+    absolute_source = (
+        source if os.path.isabs(source) else os.path.join(os.getcwd(), source)
+    )
+    lines = [
+        translate("Source: {path}").format(path=absolute_source),
+        translate(SOURCE_UNPINNED_WARNING),
+        "",
+    ]
+    if bluray:
+        lines += [
+            translate(
+                "Warning: MKV and M2TS copies may omit the 3D dependent view;"
+                " 3D preservation is not verified."
+            ),
+            "",
+        ]
     sizes: list[tuple[int, int]] = []
     for playlist in playlists if bluray else [dvd_title]:
         operation.check_cancelled()
         output_format = formats[playlist] if bluray else "mkv"
         path = output
         if bluray and directory:
-            stem = name if name and len(playlists) == 1 else f"{name + '-' if name else ''}playlist-{playlist}"
+            stem = (
+                name
+                if name and len(playlists) == 1
+                else f"{name + '-' if name else ''}playlist-{playlist}"
+            )
             path = os.path.join(output, f"{stem}.{output_format}")
         if bluray:
             result = operation.run(
-                build_disc_details_command(script, source, is_bluray=True, playlist=playlist),
-                timeout=60, abandon_unresponsive=True,
+                build_disc_details_command(
+                    script, source, is_bluray=True, playlist=playlist
+                ),
+                timeout=60,
+                abandon_unresponsive=True,
             )
             if result.returncode:
-                raise RuntimeError(translate("Cannot estimate playlist {playlist}: {error}").format(
-                    playlist=playlist, error=result.stderr.strip(),
-                ))
-            size = playlist_title(json.loads(result.stdout), playlist).get("filesize")
+                raise RuntimeError(
+                    translate(
+                        "Cannot estimate playlist {playlist}: {error}"
+                    ).format(
+                        playlist=playlist,
+                        error=result.stderr.strip(),
+                    )
+                )
+            size = playlist_title(json.loads(result.stdout), playlist).get(
+                "filesize"
+            )
+            if (
+                isinstance(size, bool)
+                or not isinstance(size, int)
+                or not 0 < size <= 2**63 - 1
+            ):
+                raise ValueError(
+                    "Playlist size must be a positive integer no greater than"
+                    " 2^63 - 1."
+                )
         else:
             size = source_bytes(source)
         need = required_bytes(size, output_format, is_bluray=bluray)
-        if not isinstance(size, int):
-            raise TypeError(translate("Invalid source size"))
         sizes.append((size, need))
         lines += [
-            (translate("Playlist {playlist} - {format}") if bluray
-             else translate("DVD title {playlist} - {format}")).format(
-                playlist=playlist, format=output_format.upper(),
+            (
+                translate("Playlist {playlist} - {format}")
+                if bluray
+                else translate("DVD title {playlist} - {format}")
+            ).format(
+                playlist=playlist,
+                format=output_format.upper(),
             ),
-            translate("Output: {path}").format(path=os.path.abspath(path)),
+            translate("Output: {path}").format(
+                path=(
+                    path
+                    if os.path.isabs(path)
+                    else os.path.join(os.getcwd(), path)
+                ),
+            ),
         ]
         if output_format == "m2ts":
             lines += [
-                translate("All streams will be retained, including both video views and all audio/subtitles."),
-                translate("Chapter sidecar (if chapters exist): {path}").format(
-                    path=os.path.abspath(path) + ".chapters.txt",
+                translate(
+                    "M2TS contains the unfiltered playlist output; it may omit"
+                    " a 3D dependent view."
+                ),
+                translate(
+                    "Chapter sidecar (if chapters exist): {path}"
+                ).format(
+                    path=(
+                        path
+                        if os.path.isabs(path)
+                        else os.path.join(os.getcwd(), path)
+                    )
+                    + ".chapters.txt",
                 ),
             ]
         lines.append("")
@@ -107,17 +179,32 @@ def copy_summary(
     for size, need in sizes:
         peak = max(peak, retained + need)
         retained += size + (size + 19) // 20
-    folder = output if directory else os.path.dirname(os.path.abspath(output))
-    available = shutil.disk_usage(folder).free
+    folder = output if directory else os.path.dirname(output) or "."
+    available = shutil.disk_usage(
+        directory_fd if directory_fd is not None else folder
+    ).free
     lines += [
-        translate("Estimated peak space including temporary files and reserve: {gib:.2f} GiB ({size} bytes)").format(
-            gib=peak / 1024**3, size=peak,
+        translate(
+            "Estimated peak space including temporary files and reserve:"
+            " {gib:.2f} GiB ({size} bytes)"
+        ).format(
+            gib=peak / 1024**3,
+            size=peak,
         ),
-        translate("Available space: {gib:.2f} GiB ({size} bytes)").format(gib=available / 1024**3, size=available),
-        translate("Conservative estimate, not the final output size. Free space is checked again when copying."),
+        translate("Available space: {gib:.2f} GiB ({size} bytes)").format(
+            gib=available / 1024**3, size=available
+        ),
+        translate(
+            "Conservative estimate, not the final output size. Free space is"
+            " checked again when copying."
+        ),
     ]
     if available < peak:
-        raise ValueError(translate("Not enough free space for this copy selection.") + "\n" + "\n".join(lines))
+        raise ValueError(
+            translate("Not enough free space for this copy selection.")
+            + "\n"
+            + "\n".join(lines)
+        )
     return "\n".join(lines)
 
 
@@ -127,7 +214,9 @@ def _object(value: object, label: str) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
-def perform_preflight(request: object, operation: ManagedProcess) -> dict[str, object]:
+def perform_preflight(
+    request: object, operation: ManagedProcess
+) -> dict[str, object]:
     data = _object(request, "preflight request")
     source = data.get("source")
     is_bluray = data.get("is_bluray")
@@ -141,9 +230,12 @@ def perform_preflight(request: object, operation: ManagedProcess) -> dict[str, o
         or (playlist is not None and not isinstance(playlist, str))
         or not isinstance(dvd_title, str)
     ):
-        raise ValueError("preflight request has invalid source or media settings")
+        raise ValueError(
+            "preflight request has invalid source or media settings"
+        )
 
     source_is_block_device = False
+    source_is_directory = False
     source_classified = False
     if source:
         validate_source_links(source)
@@ -154,21 +246,31 @@ def perform_preflight(request: object, operation: ManagedProcess) -> dict[str, o
         else:
             source_classified = True
             source_is_block_device = stat.S_ISBLK(source_mode)
+            source_is_directory = stat.S_ISDIR(source_mode)
 
     command = None
     if is_preview:
         command = preview_command(
-            source, is_bluray=is_bluray, playlist=playlist, operation=operation, dvd_title=dvd_title,
+            source,
+            is_bluray=is_bluray,
+            playlist=playlist,
+            operation=operation,
+            dvd_title=dvd_title,
         )
 
     directory_output = False
     output_path = None
     output_error = None
     summary = None
+    ambiguous_output = False
+    reviewed_identity = None
     if output is not None:
         spec = _object(output, "output settings")
         path, name, playlists, formats = (
-            spec.get("path"), spec.get("name"), spec.get("playlists"), spec.get("formats"),
+            spec.get("path"),
+            spec.get("name"),
+            spec.get("playlists"),
+            spec.get("formats"),
         )
         output_is_bluray = spec.get("is_bluray")
         if (
@@ -179,49 +281,128 @@ def perform_preflight(request: object, operation: ManagedProcess) -> dict[str, o
             raise ValueError("preflight request has invalid output settings")
         playlist_values = cast(list[object], playlists)
         format_values = cast(dict[object, object], formats)
-        if (
-            not all(isinstance(item, str) for item in playlist_values)
-            or not all(isinstance(key, str) and isinstance(value, str) for key, value in format_values.items())
+        if not all(
+            isinstance(item, str) for item in playlist_values
+        ) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in format_values.items()
         ):
             raise ValueError("preflight request has invalid output settings")
         playlist_strings = cast(list[str], playlists)
         format_strings = cast(dict[str, str], formats)
         output_path = path
         directory_output = os.path.isdir(path)
-        if output_is_bluray and not directory_output and len(playlist_strings) == 1:
+        ambiguous_output = (
+            output_is_bluray
+            and not directory_output
+            and len(playlist_strings) == 1
+            and not os.path.lexists(path)
+            and os.path.splitext(path.rstrip("/"))[1].lower()
+            not in (".mkv", ".m2ts")
+        )
+        if (
+            output_is_bluray
+            and not directory_output
+            and len(playlist_strings) == 1
+        ):
             if playlist_strings[0] not in format_strings:
-                raise ValueError(f"No output format is set for playlist {playlist_strings[0]}")
+                raise ValueError(
+                    "No output format is set for playlist"
+                    f" {playlist_strings[0]}"
+                )
             extension = "." + format_strings[playlist_strings[0]]
-            if os.path.splitext(output_path)[1].lower() != extension:
+            if ambiguous_output:
+                output_path = output_path.rstrip("/") + extension
+            elif os.path.splitext(output_path)[1].lower() != extension:
                 output_path = os.path.splitext(output_path)[0] + extension
-        try:
-            validate_output_paths(
-                output_path, output_is_bluray, name, playlist_strings,
-                operation, formats=format_strings,
-            )
-        except (OSError, ValueError) as error:
-            output_error = str(error)
-        if spec.get("summarize") is True and output_error is None:
-            script = spec.get("script")
-            if not isinstance(script, str):
-                raise ValueError("Missing copier for copy summary")
-            language = spec.get("language", "en")
-            if not isinstance(language, str) or language not in ("en", "system", "it_IT", "ro_RO"):
-                raise ValueError("Invalid GUI language for copy summary")
-            summary = copy_summary(
-                source, script, output_path, name, playlist_strings, format_strings,
-                directory_output, output_is_bluray, operation, dvd_title,
-                translate=load_translation(language).gettext,
-            )
+        summarize = spec.get("summarize") is True
+        if not (summarize and ambiguous_output):
+            try:
+                if summarize:
+                    folder = (
+                        output_path
+                        if directory_output
+                        else os.path.dirname(output_path) or "."
+                    )
+                    descriptor = os.open(
+                        folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+                    )
+                    try:
+                        info = os.fstat(descriptor)
+                        pinned = f"/proc/self/fd/{descriptor}"
+                        checked_path = (
+                            pinned
+                            if directory_output
+                            else os.path.join(
+                                pinned, os.path.basename(output_path)
+                            )
+                        )
+                        validate_output_paths(
+                            checked_path,
+                            output_is_bluray,
+                            name,
+                            playlist_strings,
+                            operation,
+                            formats=format_strings,
+                        )
+                        script = spec.get("script")
+                        if not isinstance(script, str):
+                            raise ValueError("Missing copier for copy summary")  # noqa: TRY004
+                        language = spec.get("language", "en")
+                        if not isinstance(language, str) or language not in (
+                            "en",
+                            "system",
+                            "it_IT",
+                            "ro_RO",
+                        ):
+                            raise ValueError(
+                                "Invalid GUI language for copy summary"
+                            )
+                        summary = copy_summary(
+                            source,
+                            script,
+                            output_path,
+                            name,
+                            playlist_strings,
+                            format_strings,
+                            directory_output,
+                            output_is_bluray,
+                            operation,
+                            dvd_title,
+                            translate=load_translation(language).gettext,
+                            directory_fd=descriptor,
+                        )
+                        current = os.stat(folder)
+                        reviewed_identity = (info.st_dev, info.st_ino)
+                        if reviewed_identity != (
+                            current.st_dev,
+                            current.st_ino,
+                        ):
+                            raise ValueError(
+                                "The output directory changed while preparing"
+                                " the copy summary."
+                            )
+                    finally:
+                        os.close(descriptor)
+                else:
+                    validate_output_paths(
+                        output_path, output_is_bluray, name, playlist_strings,
+                        operation, formats=format_strings,
+                    )
+            except (OSError, ValueError) as error:
+                output_error = str(error)
 
     return {
         "source_is_block_device": source_is_block_device,
+        "source_is_directory": source_is_directory,
         "source_classified": source_classified,
         "directory_output": directory_output,
         "output_path": output_path,
+        "ambiguous_output": ambiguous_output,
         "preview_command": command,
         "output_error": output_error,
         "copy_summary": summary,
+        "reviewed_identity": reviewed_identity,
     }
 
 
@@ -252,53 +433,107 @@ def run_operation_preflight(
         str(Path(__file__).parent.parent),
     ]
     result = operation.run(
-        command, timeout=(
-            PREFLIGHT_TIMEOUT + 60 * max(1, len(cast(list[str], output.get("playlists", []))))
-            if output is not None and output.get("summarize") is True else PREFLIGHT_TIMEOUT
+        command,
+        timeout=(
+            PREFLIGHT_TIMEOUT
+            + 60 * max(1, len(cast(list[str], output.get("playlists", []))))
+            if output is not None and output.get("summarize") is True
+            else PREFLIGHT_TIMEOUT
         ),
         input_data=json.dumps(request, ensure_ascii=True).encode("ascii"),
-        abandon_unresponsive=True, stderr_log=log,
+        abandon_unresponsive=True,
+        stderr_log=log,
     )
     if result.returncode:
-        raise RuntimeError(f"Operation preflight failed with exit status {result.returncode}")
+        raise RuntimeError(
+            f"Operation preflight failed with exit status {result.returncode}"
+        )
     try:
         data = _object(json.loads(result.stdout), "preflight result")
     except (TypeError, ValueError) as error:
-        raise RuntimeError("Operation preflight returned invalid JSON") from error
+        raise RuntimeError(
+            "Operation preflight returned invalid JSON"
+        ) from error
     error = data.get("error")
     if error is not None:
         if not isinstance(error, str):
             raise RuntimeError("Operation preflight returned an invalid error")
         raise RuntimeError(error)
     source_is_block_device = data.get("source_is_block_device")
+    source_is_directory = data.get("source_is_directory")
     source_classified = data.get("source_classified")
     directory_output = data.get("directory_output")
     output_path = data.get("output_path")
     preview_result = data.get("preview_command")
     output_error = data.get("output_error")
     summary = data.get("copy_summary")
+    ambiguous_output = data.get("ambiguous_output", False)
+    reviewed_identity = data.get("reviewed_identity")
+    identity_values = (
+        cast(list[object], reviewed_identity)
+        if isinstance(reviewed_identity, list)
+        else None
+    )
     if (
         not isinstance(source_is_block_device, bool)
+        or not isinstance(source_is_directory, bool)
         or not isinstance(source_classified, bool)
         or (source_is_block_device and not source_classified)
+        or (
+            source_is_directory
+            and (not source_classified or source_is_block_device)
+        )
         or not isinstance(directory_output, bool)
         or (output_path is not None and not isinstance(output_path, str))
-        or (preview_result is not None and not isinstance(preview_result, list))
+        or (
+            preview_result is not None and not isinstance(preview_result, list)
+        )
         or (output_error is not None and not isinstance(output_error, str))
         or (summary is not None and not isinstance(summary, str))
+        or not isinstance(ambiguous_output, bool)
+        or (
+            reviewed_identity is not None
+            and (
+                identity_values is None
+                or len(identity_values) != 2
+                or any(
+                    not isinstance(value, int)
+                    or isinstance(value, bool)
+                    or value < 0
+                    for value in identity_values
+                )
+            )
+        )
     ):
         raise RuntimeError("Operation preflight returned an invalid result")
-    preview_values = cast(list[object], preview_result) if isinstance(preview_result, list) else None
-    if preview_values is not None and not all(isinstance(item, str) for item in preview_values):
+    preview_values = (
+        cast(list[object], preview_result)
+        if isinstance(preview_result, list)
+        else None
+    )
+    if preview_values is not None and not all(
+        isinstance(item, str) for item in preview_values
+    ):
         raise RuntimeError("Operation preflight returned an invalid result")
     return OperationPreflight(
         source_is_block_device,
         directory_output,
         output_path,
-        tuple(cast(list[str], preview_values)) if preview_values is not None else None,
+        (
+            tuple(cast(list[str], preview_values))
+            if preview_values is not None
+            else None
+        ),
         output_error,
         source_classified,
         summary,
+        ambiguous_output,
+        source_is_directory,
+        (
+            (cast(int, identity_values[0]), cast(int, identity_values[1]))
+            if identity_values is not None
+            else None
+        ),
     )
 
 
@@ -315,13 +550,21 @@ def main() -> int:
 
     try:
         for signum in (signal.SIGINT, signal.SIGTERM):
-            previous_handlers[signum] = cast(signal.Handlers, signal.signal(signum, cancel))
+            previous_handlers[signum] = cast(
+                signal.Handlers, signal.signal(signum, cancel)
+            )
         try:
             request = json.load(sys.stdin)
             result = perform_preflight(request, operation)
         except OperationCancelled:
             return 130
-        except (OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as error:
+        except (
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            subprocess.SubprocessError,
+        ) as error:
             result = {"error": str(error)}
         sys.stdout.write(json.dumps(result, ensure_ascii=True))
         return 0

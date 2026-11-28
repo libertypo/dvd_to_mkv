@@ -20,6 +20,8 @@ validated allocation and directory bounds, and checked each entry's tag.
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+from __future__ import annotations
+
 import struct
 from functools import cached_property
 from typing import TYPE_CHECKING
@@ -48,9 +50,13 @@ class LongADPartition(LongAD):
                 f'UDF allocation references unknown partition {self.partition}'
             ) from error
         if self.flags != 0:
-            raise UnsupportedUdfError('Unrecorded or chained UDF extents are unsupported')
+            raise UnsupportedUdfError(
+                'Unrecorded or chained UDF extents are unsupported'
+            )
         if self.location * 2048 + self.length > partition.length * 2048:
-            raise MalformedUdfError('Long allocation extent exceeds partition bounds')
+            raise MalformedUdfError(
+                'Long allocation extent exceeds partition bounds'
+            )
         self.location_absolute = partition.location + self.location
 
 
@@ -64,9 +70,13 @@ class ShortADPartition(ShortAD):
                 f'UDF allocation references unknown partition {partition_nr}'
             ) from error
         if self.flags != 0:
-            raise UnsupportedUdfError('Unrecorded or chained UDF extents are unsupported')
+            raise UnsupportedUdfError(
+                'Unrecorded or chained UDF extents are unsupported'
+            )
         if self.location * 2048 + self.length > partition.length * 2048:
-            raise MalformedUdfError('Short allocation extent exceeds partition bounds')
+            raise MalformedUdfError(
+                'Short allocation extent exceeds partition bounds'
+            )
         self.location_absolute = partition.location + self.location
 
 
@@ -80,13 +90,22 @@ class ICBTag:
         self.filetype, self.flags = data
 
     def __repr__(self) -> str:
-        return f'<ICBTag with filetype: {self.filetype:d}; flags: {self.flags:x}>'
+        return (
+            f'<ICBTag with filetype: {self.filetype:d}; flags: {self.flags:x}>'
+        )
 
 
 class FileSet:
     _struct = struct.Struct('<16x384x16s')
 
-    def __init__(self, media: Media, volume: Volume, partition_nr: int, tag: DescriptorTag, buf: bytes) -> None:
+    def __init__(
+        self,
+        media: Media,
+        volume: Volume,
+        partition_nr: int,
+        tag: DescriptorTag,
+        buf: bytes,
+    ) -> None:
         self._media = media
         self._volume = volume
         self._partition_nr = partition_nr
@@ -107,13 +126,22 @@ class FileSet:
 
         buf = self._media.read_sector(location, length)[:length]
         tag = DescriptorTag(buf, self.root_icb.location)
-        return FileEntry(self._media, self._volume, self.root_icb.partition, tag, buf)
+        return FileEntry(
+            self._media, self._volume, self.root_icb.partition, tag, buf
+        )
 
 
 class FileEntry:
     _struct = struct.Struct('<16x20s20xQ104xII')
 
-    def __init__(self, media: Media, volume: Volume, partition_nr: int, tag: DescriptorTag, buf: bytes) -> None:
+    def __init__(
+        self,
+        media: Media,
+        volume: Volume,
+        partition_nr: int,
+        tag: DescriptorTag,
+        buf: bytes,
+    ) -> None:
         self._media = media
         self._volume = volume
         self._partition_nr = partition_nr
@@ -131,18 +159,28 @@ class FileEntry:
         ad: list[ShortADPartition] = []
 
         if 176 + length_ea + length_ad > len(buf):
-            raise MalformedUdfError('Allocation descriptors exceed file-entry length')
+            raise MalformedUdfError(
+                'Allocation descriptors exceed file-entry length'
+            )
         tag.require_crc_length(160 + length_ea + length_ad)
         buf = buf[176 + length_ea:176 + length_ea + length_ad]
 
         desc_type = self.icb.flags & 7
         if desc_type != 0:
-            raise UnsupportedUdfError(f'Unsupported UDF allocation descriptor type: {desc_type}')
+            raise UnsupportedUdfError(
+                f'Unsupported UDF allocation descriptor type: {desc_type}'
+            )
         if len(buf) % ShortAD.size:
             raise MalformedUdfError('Truncated short allocation descriptor')
         cur = 0
         while cur < len(buf):
-            ad.append(ShortADPartition(buf[cur:cur + ShortAD.size], self._volume, self._partition_nr))
+            ad.append(
+                ShortADPartition(
+                    buf[cur : cur + ShortAD.size],
+                    self._volume,
+                    self._partition_nr,
+                )
+            )
             cur += ShortAD.size
 
         self.ad = tuple(ad)
@@ -155,7 +193,9 @@ class FileEntry:
         if self.icb.filetype != 4:
             raise MalformedUdfError('Expected a UDF directory entry')
         if self.length > self._media.MAX_METADATA_BYTES:
-            raise MalformedUdfError('UDF directory exceeds the 16 MiB metadata limit')
+            raise MalformedUdfError(
+                'UDF directory exceeds the 16 MiB metadata limit'
+            )
         tree: dict[str, FileIdentifier] = {}
         remaining = self.length
         chunks: list[bytes] = []
@@ -165,12 +205,16 @@ class FileEntry:
             length = min(ad.length, remaining)
             if not length:
                 continue
-            chunks.append(self._media.read_sector(ad.location_absolute, length)[:length])
+            chunks.append(
+                self._media.read_sector(ad.location_absolute, length)[:length]
+            )
             extents.append((total, total + length, ad.location))
             total += length
             remaining -= length
         if remaining:
-            raise MalformedUdfError('Directory length exceeds its allocation extents')
+            raise MalformedUdfError(
+                'Directory length exceeds its allocation extents'
+            )
         buf = b''.join(chunks)
         cur = 0
         extent_index = 0
@@ -182,15 +226,28 @@ class FileEntry:
             if not any(buf[cur:block_end]):
                 cur = block_end
                 continue
-            tag = DescriptorTag(memoryview(buf)[cur:], location + (cur - start) // 2048)
-            f = FileIdentifier(self._media, self._volume, self._partition_nr, tag, buf, offset=cur)
+            tag = DescriptorTag(
+                memoryview(buf)[cur:], location + (cur - start) // 2048
+            )
+            f = FileIdentifier(
+                self._media,
+                self._volume,
+                self._partition_nr,
+                tag,
+                buf,
+                offset=cur,
+            )
             cur += f.descriptor_length
             if f.characteristics & 4:
                 continue
             if f.name in tree:
-                raise MalformedUdfError(f'Duplicate UDF directory name: {f.name!r}')
+                raise MalformedUdfError(
+                    f'Duplicate UDF directory name: {f.name!r}'
+                )
             if len(tree) >= 100_000:
-                raise MalformedUdfError('UDF directory exceeds the 100000-entry limit')
+                raise MalformedUdfError(
+                    'UDF directory exceeds the 100000-entry limit'
+                )
             tree[f.name] = f
         return tree
 
@@ -207,7 +264,9 @@ class FileIdentifier:
         self._partition_nr = partition_nr
         self.tag = tag
         if tag.identifier != 257:
-            raise MalformedUdfError(f'Invalid file-identifier tag: {tag.identifier}')
+            raise MalformedUdfError(
+                f'Invalid file-identifier tag: {tag.identifier}'
+            )
 
         if offset < 0 or len(buf) - offset < self._struct.size:
             raise MalformedUdfError('Truncated file-identifier descriptor')
@@ -217,9 +276,13 @@ class FileIdentifier:
         # From libdvdread
         self.descriptor_length = 4 * ((38 + length_fi + length_iu + 3) // 4)
         if self.descriptor_length > len(buf) - offset:
-            raise MalformedUdfError('File-identifier name exceeds descriptor bounds')
+            raise MalformedUdfError(
+                'File-identifier name exceeds descriptor bounds'
+            )
         if tag.crc_length > self.descriptor_length - 16:
-            raise MalformedUdfError('File-identifier CRC exceeds descriptor bounds')
+            raise MalformedUdfError(
+                'File-identifier CRC exceeds descriptor bounds'
+            )
         tag.require_crc_length(22 + length_iu + length_fi)
 
         self._icb = icb
@@ -228,8 +291,18 @@ class FileIdentifier:
         else:
             _ = self.icb
             self.name = (
-                OSTACompressedUnicode(buf[offset + 38 + length_iu:offset + 38 + length_iu + length_fi])
-                if length_fi else ''
+                OSTACompressedUnicode(
+                    buf[
+                        offset
+                        + 38
+                        + length_iu : offset
+                        + 38
+                        + length_iu
+                        + length_fi
+                    ]
+                )
+                if length_fi
+                else ''
             )
 
     def __repr__(self) -> str:
@@ -238,7 +311,9 @@ class FileIdentifier:
     @cached_property
     def icb(self) -> LongADPartition:
         if self.characteristics & 4:
-            raise MalformedUdfError('Deleted file identifier has no usable ICB')
+            raise MalformedUdfError(
+                'Deleted file identifier has no usable ICB'
+            )
         return LongADPartition(self._icb, self._volume)
 
     @cached_property
@@ -248,4 +323,6 @@ class FileIdentifier:
 
         buf = self._media.read_sector(location, length)[:length]
         tag = DescriptorTag(buf, self.icb.location)
-        return FileEntry(self._media, self._volume, self.icb.partition, tag, buf)
+        return FileEntry(
+            self._media, self._volume, self.icb.partition, tag, buf
+        )

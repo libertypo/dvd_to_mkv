@@ -21,9 +21,16 @@ from collections.abc import Callable, Collection, Iterable
 
 import gi
 
+# GTK's version must be selected before GTK-dependent imports.
+# ruff: noqa: E402
 gi.require_version("Gtk", "4.0")
 
-from gi.repository import Gio, GLib, GObject, Gtk  # type: ignore[reportMissingModuleSource]
+from gi.repository import (
+    Gio,  # type: ignore[reportMissingModuleSource]
+    GLib,  # type: ignore[reportMissingModuleSource]
+    GObject,  # type: ignore[reportMissingModuleSource]
+    Gtk,  # type: ignore[reportMissingModuleSource]
+)
 
 from dvdvideo.gui_tooltips import TOOLTIPS
 from dvdvideo.gui_translation import identity
@@ -32,7 +39,10 @@ RENDER_BATCH_ROWS = 32
 
 
 class ListingRow:
-    def __init__(self, label: str, active: bool, changed: Callable[..., object]) -> None:
+
+    def __init__(
+        self, label: str, active: bool, changed: Callable[..., object]
+    ) -> None:
         self.label = label
         self.active = active
         self.sensitive = True
@@ -101,16 +111,23 @@ class _RowModel(GObject.Object, Gio.ListModel):
         removed = len(self.rows) - prefix - suffix
         added = len(rows) - prefix - suffix
         published_prefix = min(prefix, previous)
-        published_added = min(RENDER_BATCH_ROWS, added) if prefix <= previous else 0
-        published_suffix = max(0, previous - prefix - removed) if added <= RENDER_BATCH_ROWS else 0
+        published_added = (
+            min(RENDER_BATCH_ROWS, added) if prefix <= previous else 0
+        )
+        published_suffix = (
+            max(0, previous - prefix - removed)
+            if added <= RENDER_BATCH_ROWS
+            else 0
+        )
         published = published_prefix + published_added + published_suffix
         cached = {item.row: item for item in self.items.values()}
         self.rows = rows
         self.items = {
-            index: cached[row] for index, (row, _identifier) in enumerate(rows[:published])
+            index: cached[row]
+            for index, (row, _identifier) in enumerate(rows[:published])
             if row in cached
         }
-        # GTK preallocates a viewport cache; publish it in small main-loop batches too.
+        # GTK preallocates a viewport cache; publish it in small batches too.
         self.published = published
         removed = previous - published_prefix - published_suffix
         added = published - published_prefix - published_suffix
@@ -160,12 +177,22 @@ class ListingView:
         self.on_stream_toggled = on_stream_toggled
         self.translate = translate
         self.show_unselected = False
+        self.show_hidden_playlists = False
+        self.hidden_playlist_ids: set[str] = set()
         self.on_visibility_changed = on_visibility_changed
         self._visibility_refresh: int | None = None
+        self._focus_refresh: int | None = None
+        self._focus_row: ListingRow | None = None
+        self._focus_origin: Gtk.Widget | None = None
         self._closed = False
         self.rows: list[tuple[ListingRow, str]] = []
         self.stream_rows: list[tuple[ListingRow, str]] = []
-        self._bound_rows: dict[Gtk.ListItem, tuple[ListingRow, Gtk.CheckButton, int]] = {}
+        self._bound_rows: dict[
+            Gtk.ListItem, tuple[ListingRow, Gtk.CheckButton, int]
+        ] = {}
+        self._focus_controllers: list[
+            tuple[Gtk.ListView, Gtk.EventController, int]
+        ] = []
         self._model = self._configure(list_box)
         self._stream_model = self._configure(stream_list_box)
 
@@ -177,15 +204,31 @@ class ListingView:
         factory.connect("unbind", self._unbind)
         view.set_factory(factory)
         view.set_model(Gtk.NoSelection.new(model))
+        keys = Gtk.EventControllerKey(
+            propagation_phase=Gtk.PropagationPhase.CAPTURE
+        )
+        clicks = Gtk.GestureClick(
+            propagation_phase=Gtk.PropagationPhase.CAPTURE
+        )
+        for controller, signal in ((keys, "key-pressed"), (clicks, "pressed")):
+            handler = controller.connect(signal, self._cancel_focus_restore)
+            view.add_controller(controller)
+            self._focus_controllers.append((view, controller, handler))
         return model
 
-    def _setup(self, _factory: Gtk.SignalListItemFactory, item: Gtk.ListItem) -> None:
+    def _setup(
+        self, _factory: Gtk.SignalListItemFactory, item: Gtk.ListItem
+    ) -> None:
         checkbox = Gtk.CheckButton(margin_top=4, margin_bottom=4, hexpand=True)
         item.set_child(checkbox)
 
-    def _bind(self, _factory: Gtk.SignalListItemFactory, item: Gtk.ListItem) -> None:
+    def _bind(
+        self, _factory: Gtk.SignalListItemFactory, item: Gtk.ListItem
+    ) -> None:
         model_item, checkbox = item.get_item(), item.get_child()
-        if not isinstance(model_item, _RowItem) or not isinstance(checkbox, Gtk.CheckButton):
+        if not isinstance(model_item, _RowItem) or not isinstance(
+            checkbox, Gtk.CheckButton
+        ):
             raise TypeError("Listing items require a row model and a checkbox")
         row = model_item.row
         checkbox.set_label(row.label)
@@ -195,8 +238,12 @@ class ListingView:
         row.widget = checkbox
         handler = checkbox.connect("toggled", self._toggled, row)
         self._bound_rows[item] = row, checkbox, handler
+        if row is self._focus_row:
+            self._schedule_focus_restore()
 
-    def _unbind(self, _factory: Gtk.SignalListItemFactory, item: Gtk.ListItem) -> None:
+    def _unbind(
+        self, _factory: Gtk.SignalListItemFactory, item: Gtk.ListItem
+    ) -> None:
         row, checkbox, handler = self._bound_rows.pop(item)
         checkbox.disconnect(handler)
         if row.widget is checkbox:
@@ -205,8 +252,12 @@ class ListingView:
     def _toggled(self, checkbox: Gtk.CheckButton, row: ListingRow) -> None:
         row.set_active(checkbox.get_active())
 
-    def _row(self, label: str, active: bool, *, streams: bool = False) -> ListingRow:
-        callback = self.on_stream_toggled if streams else self.on_selection_changed
+    def _row(
+        self, label: str, active: bool, *, streams: bool = False
+    ) -> ListingRow:
+        callback = (
+            self.on_stream_toggled if streams else self.on_selection_changed
+        )
 
         def changed(row: ListingRow) -> None:
             try:
@@ -220,9 +271,57 @@ class ListingView:
         self.show_unselected = show
         self._schedule_visibility_refresh()
 
+    def set_hidden_playlists(
+        self, identifiers: Collection[str], *, show: bool
+    ) -> None:
+        self.hidden_playlist_ids = set(identifiers)
+        self.show_hidden_playlists = show
+        self._schedule_visibility_refresh()
+
+    def excluded_playlist_ids(self) -> set[str]:
+        return (
+            set() if self.show_hidden_playlists else self.hidden_playlist_ids
+        )
+
     def _schedule_visibility_refresh(self) -> None:
         if not self._closed and self._visibility_refresh is None:
             self._visibility_refresh = GLib.idle_add(self._refresh_visibility)
+
+    def _schedule_focus_restore(self) -> None:
+        if not self._closed and self._focus_refresh is None:
+            self._focus_refresh = GLib.idle_add(self._restore_focus)
+
+    def _cancel_focus_restore(self, *_args: object) -> bool:
+        self._focus_row = None
+        return False
+
+    def _restore_focus(self) -> bool:
+        self._focus_refresh = None
+        row = self._focus_row
+        if row is None:
+            return False
+        root = self.list_box.get_root()
+        current_focus = root.get_focus() if root is not None else None
+        # GTK can move focus within the list while recycling a removed row.
+        focus_left_list = (
+            current_focus is not None
+            and current_focus is not self._focus_origin
+            and not any(
+                current_focus.is_ancestor(view)
+                for view in (self.list_box, self.stream_list_box)
+            )
+        )
+        if focus_left_list or not any(
+            row is visible
+            for rows in (self._model.rows, self._stream_model.rows)
+            for visible, _identifier in rows
+        ):
+            self._focus_row = None
+        elif row.widget is not None:
+            row.widget.grab_focus()
+            self._focus_row = None
+        # An unbound target is retried by _bind, not by polling the main loop.
+        return False
 
     def _refresh_visibility(self) -> bool:
         self._visibility_refresh = None
@@ -230,43 +329,69 @@ class ListingView:
             (self.rows, self._model),
             (self.stream_rows, self._stream_model),
         ):
+            excluded: set[str] = (
+                self.excluded_playlist_ids() if rows is self.rows else set()
+            )
             visible = [
-                (row, identifier) for row, identifier in rows
-                if self.show_unselected or row.get_active()
+                (row, identifier)
+                for row, identifier in rows
+                if identifier not in excluded
+                and (self.show_unselected or row.get_active())
             ]
-            # Keep existing bindings and keyboard focus when membership did not change.
+            # Keep existing bindings and focus when membership did not change.
             if visible != model.rows:
                 focused = next(
-                    (index for index, (row, _identifier) in enumerate(model.rows)
-                     if row.widget is not None and row.widget.has_focus()),
+                    (
+                        index
+                        for index, (row, _identifier) in enumerate(model.rows)
+                        if row.widget is not None and row.widget.has_focus()
+                    ),
                     None,
                 )
                 visible_rows = {row for row, _identifier in visible}
                 focus_position = (
-                    sum(row in visible_rows for row, _identifier in model.rows[:focused])
-                    if focused is not None else None
+                    sum(
+                        row in visible_rows
+                        for row, _identifier in model.rows[:focused]
+                    )
+                    if focused is not None
+                    else None
                 )
+                if focus_position is not None and visible:
+                    self._focus_row = visible[
+                        min(focus_position, len(visible) - 1)
+                    ][0]
+                    self._schedule_focus_restore()
                 model.replace(visible)
                 if focus_position is not None and visible:
-                    row = visible[min(focus_position, len(visible) - 1)][0]
-                    if row.widget is not None:
-                        row.widget.grab_focus()
+                    root = self.list_box.get_root()
+                    self._focus_origin = (
+                        root.get_focus() if root is not None else None
+                    )
+        if self._focus_row is not None:
+            self._schedule_focus_restore()
         self.on_visibility_changed()
         return False
 
     def render_rows(self, rows: Iterable[tuple[str, str, bool]]) -> None:
-        self.rows = [(self._row(label, active), identifier) for identifier, label, active in rows]
+        self.rows = [
+            (self._row(label, active), identifier)
+            for identifier, label, active in rows
+        ]
         self.show_unselected = False
         self._model.replace([])
         self._schedule_visibility_refresh()
 
-    def add_row(self, identifier: str, label: str, active: bool = False) -> None:
+    def add_row(
+        self, identifier: str, label: str, active: bool = False
+    ) -> None:
         row = self._row(label, active)
         self.rows.append((row, identifier))
         self._schedule_visibility_refresh()
 
     def clear_rows(self) -> None:
         self.rows.clear()
+        self.hidden_playlist_ids.clear()
         self._model.replace([])
         self.show_unselected = False
         self._schedule_visibility_refresh()
@@ -276,8 +401,17 @@ class ListingView:
         if self._visibility_refresh is not None:
             GLib.source_remove(self._visibility_refresh)
             self._visibility_refresh = None
+        if self._focus_refresh is not None:
+            GLib.source_remove(self._focus_refresh)
+            self._focus_refresh = None
+        self._focus_row = None
+        self._focus_origin = None
         self._model.cancel_publication()
         self._stream_model.cancel_publication()
+        for view, controller, handler in self._focus_controllers:
+            controller.disconnect(handler)
+            view.remove_controller(controller)
+        self._focus_controllers.clear()
         for view in (self.list_box, self.stream_list_box):
             view.set_model(None)
             view.set_factory(None)
@@ -288,29 +422,45 @@ class ListingView:
 
     def set_all_active(self, *, streams: bool = False) -> None:
         rows = self.stream_rows if streams else self.rows
-        for row, _identifier in rows:
-            row.set_active(True)
+        excluded: set[str] = set() if streams else self.excluded_playlist_ids()
+        for row, identifier in rows:
+            if identifier not in excluded:
+                row.set_active(True)
 
-    def set_active_ids(self, selected: Collection[str], *, streams: bool = False) -> None:
+    def set_active_ids(
+        self, selected: Collection[str], *, streams: bool = False
+    ) -> None:
         rows = self.stream_rows if streams else self.rows
         for row, identifier in rows:
             row.set_active(identifier in selected)
 
     def render_stream_rows(
-        self, playlist: str, rows: Iterable[tuple[str, str]], selected: Collection[str],
+        self,
+        playlist: str,
+        rows: Iterable[tuple[str, str]],
+        selected: Collection[str],
     ) -> None:
         self.stream_rows = [
-            (self._row(label, identifier in selected, streams=True), identifier)
+            (
+                self._row(label, identifier in selected, streams=True),
+                identifier,
+            )
             for identifier, label in rows
         ]
         self._stream_model.replace([])
         self._schedule_visibility_refresh()
-        self.streams_label.set_text(self.translate("Streams for playlist {playlist}").format(playlist=playlist))
+        self.streams_label.set_text(
+            self.translate("Streams for playlist {playlist}").format(
+                playlist=playlist
+            )
+        )
 
     def clear_stream_rows(self) -> None:
         self.stream_rows.clear()
         self._stream_model.replace([])
-        self.streams_label.set_text(self.translate("Choose a playlist to inspect its tracks"))
+        self.streams_label.set_text(
+            self.translate("Choose a playlist to inspect its tracks")
+        )
         self._schedule_visibility_refresh()
 
     def update_stream_format(

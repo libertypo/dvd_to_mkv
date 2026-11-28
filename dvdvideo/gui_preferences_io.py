@@ -28,12 +28,14 @@ MAX_PREFERENCES_BYTES = 4 * 1024 * 1024
 
 
 class PreferencesDurabilityError(OSError):
-    """The replacement committed, but its crash durability could not be confirmed."""
+    """Replacement committed, but crash durability could not be confirmed."""
 
 
 def write_preferences(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=".preferences-", dir=path.parent)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".preferences-", dir=path.parent
+    )
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as file:
             json.dump(data, file, ensure_ascii=True, indent=2)
@@ -57,7 +59,8 @@ def write_preferences(path: Path, data: dict[str, Any]) -> None:
             os.close(directory)
     except OSError as error:
         raise PreferencesDurabilityError(
-            f"Preferences were replaced at {path}, but crash durability could not be confirmed: {error}"
+            f"Preferences were replaced at {path}, but crash durability could"
+            f" not be confirmed: {error}"
         ) from error
 
 
@@ -79,7 +82,9 @@ class PreferencesWriter:
     def submit(self, path: Path, snapshot: PreferenceSnapshot) -> None:
         with self.lock:
             if self._abandoned:
-                raise OSError("GUI preferences writer was abandoned during shutdown")
+                raise OSError(
+                    "GUI preferences writer was abandoned during shutdown"
+                )
             self.pending = (path, snapshot)
             self._start()
 
@@ -95,8 +100,14 @@ class PreferencesWriter:
 
     def retry(self) -> None:
         with self.lock:
-            if self._abandoned or self.thread is not None or self.failed is None:
-                raise OSError("No failed GUI preferences write is available to retry")
+            if (
+                self._abandoned
+                or self.thread is not None
+                or self.failed is None
+            ):
+                raise OSError(
+                    "No failed GUI preferences write is available to retry"
+                )
             self.pending = self.failed
             self._start()
 
@@ -108,7 +119,9 @@ class PreferencesWriter:
             except RuntimeError as error:
                 self.thread = None
                 self.pending = None
-                raise OSError("Could not start GUI preferences writer") from error
+                raise OSError(
+                    "Could not start GUI preferences writer"
+                ) from error
 
     def _run(self) -> None:
         while True:
@@ -127,7 +140,10 @@ class PreferencesWriter:
                         return
                 write_preferences(path, data)
             except Exception as error:  # noqa: BLE001 - report failed writes and keep processing queued saves
-                message = f"GUI preferences write failed: {type(error).__name__}: {error}"
+                message = (
+                    f"GUI preferences write failed: {type(error).__name__}:"
+                    f" {error}"
+                )
                 with self.lock:
                     self.failed = pending
                     self._error = message

@@ -12,6 +12,57 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 "Generated-By: Babel 2.18.0\n"
 
+msgid "Choose output type"
+msgstr "Scegli il tipo di destinazione"
+
+msgid "The output path does not exist and does not end in .mkv or .m2ts:\n{path}\n\nUse it as a file named {resolved}, or choose Directory to create or select an existing directory before retrying."
+msgstr "Il percorso di destinazione non esiste e non termina con .mkv o .m2ts:\n{path}\n\nUsalo come file con il nome {resolved}, oppure scegli Cartella per creare o selezionare una cartella esistente prima di riprovare."
+
+msgid "Directory"
+msgstr "Cartella"
+
+msgid "Choose an existing output directory"
+msgstr "Scegli una cartella di destinazione esistente"
+
+msgid "Use as file"
+msgstr "Usa come file"
+
+msgid "Use the displayed output filename"
+msgstr "Usa il nome del file di destinazione mostrato"
+
+msgid "Automatic (sample-based)"
+msgstr "Automatico (basato su un campione)"
+
+msgid "Original M2TS (unfiltered output)"
+msgstr "M2TS originale (output senza filtri)"
+
+msgid "Copy the playlist output without filtering; 3D preservation is not guaranteed."
+msgstr "Copia l'output della playlist senza filtri; la conservazione del 3D non è garantita."
+
+msgid "Unfiltered playlist output (M2TS)."
+msgstr "Output della playlist senza filtri (M2TS)."
+
+msgid "Playlist {playlist}: M2TS copies the playlist output without filtering"
+msgstr "Playlist {playlist}: M2TS copia l'output della playlist senza filtri"
+
+msgid "Copy without filtering?"
+msgstr "Copiare senza filtri?"
+
+msgid "Playlist {playlist}: copy unfiltered M2TS output?"
+msgstr "Playlist {playlist}: copiare l'output M2TS senza filtri?"
+
+msgid "Your filtered selection cannot be applied to M2TS. The playlist output may omit the 3D dependent view."
+msgstr "La selezione filtrata non può essere applicata a M2TS. L'output della playlist potrebbe omettere la vista 3D dipendente."
+
+msgid "Warning: MKV and M2TS copies may omit the 3D dependent view; 3D preservation is not verified."
+msgstr "Attenzione: le copie MKV e M2TS potrebbero omettere la vista 3D dipendente; la conservazione del 3D non è verificata."
+
+msgid "Warning: The source is not pinned and may change or be replaced. Use a source protected from changes and keep the same disc inserted."
+msgstr "Attenzione: la sorgente non è vincolata e potrebbe essere modificata o sostituita. Usa una sorgente protetta dalle modifiche e mantieni inserito lo stesso disco."
+
+msgid "M2TS contains the unfiltered playlist output; it may omit a 3D dependent view."
+msgstr "M2TS contiene l'output della playlist senza filtri; potrebbe omettere una vista 3D dipendente."
+
 msgid "Restart to apply the language. Some messages remain in English."
 msgstr "Riavvia per applicare la lingua. Alcuni messaggi rimangono in inglese."
 
@@ -171,6 +222,12 @@ msgstr "Seleziona tutto"
 msgid "Show unselected"
 msgstr "Mostra non selezionati"
 
+msgid "Show dummy, top menu, and repeated playlists"
+msgstr "Mostra playlist fittizie, menu principale e playlist ripetute"
+
+msgid "Show disc-labelled dummy and top menu playlists, and playlists with repeated video. Labels and repetition do not prove a playlist is unusable."
+msgstr "Mostra le playlist etichettate dal disco come fittizie o menu principale e quelle con video ripetuti. Le etichette e le ripetizioni non dimostrano che una playlist sia inutilizzabile."
+
 msgid "Hide unselected"
 msgstr "Nascondi non selezionati"
 
@@ -190,11 +247,11 @@ msgid "Preview"
 msgstr "Anteprima"
 
 msgid ""
-"Play the selected DVD title or one selected Blu-ray playlist in FFplay (2D). "
+"Play the selected DVD title or one selected Blu-ray playlist in mpv (2D). "
 "Preview uses the player's tracks, not the copy selections."
 msgstr ""
 "Riproduce il titolo DVD selezionato o una playlist Blu-ray selezionata con "
-"FFplay (2D). L'anteprima usa le tracce del lettore, non quelle selezionate "
+"mpv (2D). L'anteprima usa le tracce del lettore, non quelle selezionate "
 "per la copia."
 
 msgid "Inspect Tracks"
@@ -237,6 +294,9 @@ msgstr "Tracce"
 msgid "Select one playlist and click Inspect Tracks"
 msgstr "Seleziona una playlist e fai clic su Analizza tracce"
 
+msgid "Choose a playlist"
+msgstr "Scegli una playlist"
+
 msgid "Choose a playlist to inspect its tracks"
 msgstr "Scegli una playlist per analizzarne le tracce"
 
@@ -272,6 +332,21 @@ msgstr "Unità"
 
 msgid "Close"
 msgstr "Chiudi"
+
+msgid "Legalese Pleasantries"
+msgstr "Convenevoli legali"
+
+msgid "Legal notice"
+msgstr "Avviso legale"
+
+msgid "Read the full legal notice."
+msgstr "Leggi l'avviso legale completo."
+
+msgid "Close the legal notice."
+msgstr "Chiudi l'avviso legale."
+
+msgid "Use this software only where copying and any necessary decryption are lawful. The software is provided without warranty."
+msgstr "Usa questo software solo dove la copia e l'eventuale decifratura necessaria sono lecite. Il software è fornito senza garanzia."
 
 msgid "Verify Existing Copy"
 msgstr "Verifica copia esistente"
@@ -627,11 +702,14 @@ msgstr ""
 "Avanzamento della fase corrente e tempo residuo stimato, se disponibile"
 
 msgid ""
-"List DVD titles using lsdvd. Duration and track counts are hints, not "
-"automatic selection."
+"List DVD titles using lsdvd. An extra same-language stereo audio track can "
+"suggest commentary but is unverified. Duration and track counts are hints, "
+"not automatic selection."
 msgstr ""
-"Elenca i titoli DVD con lsdvd. Durata e numero di tracce sono indicativi e "
-"non determinano la selezione automatica."
+"Elenca i titoli DVD con lsdvd. Una traccia audio "
+"stereo aggiuntiva nella stessa lingua può suggerire un commento, ma non è "
+"verificata. Durata e numero di tracce sono indicativi e non determinano la "
+"selezione automatica."
 
 msgid "Drives (cancelling...)"
 msgstr "Unità (annullamento...)"
@@ -879,6 +957,45 @@ msgstr "durata più lunga nell'elenco"
 
 msgid "40+ minutes"
 msgstr "40 minuti o più"
+
+#, python-brace-format
+msgid "Analysis group {group}"
+msgstr "Gruppo di analisi {group}"
+
+msgid "Not included in playlist analysis"
+msgstr "Non incluso nell'analisi delle playlist"
+
+#, python-brace-format
+msgid "Disc label: {label} (unverified)"
+msgstr "Etichetta del disco: {label} (non verificata)"
+
+msgid "Disc title candidate (unverified)"
+msgstr "Possibile titolo del disco (non verificato)"
+
+msgid "Possible main feature (unverified)"
+msgstr "Possibile film principale (non verificato)"
+
+msgid "Menu reference (unverified)"
+msgstr "Riferimento del menu (non verificato)"
+
+msgid "Title set contains director-commentary audio metadata (unverified)"
+msgstr "Il gruppo di titoli contiene metadati audio di commento del regista (non verificati)"
+
+#, python-brace-format
+msgid "Additional audio track: {language} ({channels} channels; possible commentary, unverified)"
+msgstr "Traccia audio aggiuntiva: {language} ({channels} canali; possibile commento, non verificato)"
+
+msgid "Director-commentary audio metadata (unverified)"
+msgstr "Metadati audio di commento del regista (non verificati)"
+
+msgid "Startup reference (unverified)"
+msgstr "Riferimento all'avvio (non verificato)"
+
+msgid "Navigation reference (unverified)"
+msgstr "Riferimento di navigazione (non verificato)"
+
+msgid "No fixed navigation reference found"
+msgstr "Nessun riferimento di navigazione fisso trovato"
 
 #, python-brace-format
 msgid "Playlist {id}    {duration}    {chapters} chapters"
